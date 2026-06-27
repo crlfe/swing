@@ -1,16 +1,11 @@
 import { h } from "./h.js";
 
-interface FileInfo {
-  path: string;
-  name: string;
-}
-
 export function addTab(
-  file: FileInfo,
+  path: string,
   onSwitch: (fileName: string) => void,
   onClose: (fileName: string) => void,
 ): HTMLElement {
-  const fileName = file.path;
+  const fileName = path;
 
   const btn = h(
     "button",
@@ -20,7 +15,7 @@ export function addTab(
       onclick: () => onSwitch(fileName),
     },
     [
-      file.name,
+      path.replace(/.*\//, ""),
       h(
         "button",
         {

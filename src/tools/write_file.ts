@@ -29,8 +29,7 @@ export const writeFileTool: Tool = {
       logInfo(`Writing to file: ${path}`);
     }
     try {
-      const type = fs.getFileType(path);
-      fs.write(path, content, type);
+      fs.write(path, content);
 
       // Update editor view if open
       state.updateViewContent(path, content);

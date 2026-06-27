@@ -8,7 +8,9 @@
 
     "strict": true,
     "allowImportingTsExtensions": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+
+    "types": ["vite/client"]
   },
   "exclude": ["**/dist", "**/node_modules"]
 }

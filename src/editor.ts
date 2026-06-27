@@ -21,6 +21,8 @@ export function createEditor(
   onUpdate: (content: string) => void,
   container: HTMLElement,
 ): EditorView {
+  if (typeof content !== "string") throw new TypeError();
+
   const state = EditorState.create({
     doc: content,
     extensions: [

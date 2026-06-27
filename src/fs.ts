@@ -7,7 +7,7 @@ export type FileTreeNode = {
 
 export class Files extends EventTarget {
   private readonly storageKey: string;
-  private files: Record<string, { type: string; content: string }>;
+  private files: Record<string, string>;
 
   constructor(storageKey: string) {
     super();
@@ -15,7 +15,12 @@ export class Files extends EventTarget {
     const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
-        this.files = JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed.version === 1) {
+          this.files = parsed.files;
+        } else {
+          throw new Error("Ignoring incompatible saved project");
+        }
       } catch (e) {
         console.error("Failed to load files from localStorage", e);
         this.files = getDefaultFiles();
@@ -26,14 +31,20 @@ export class Files extends EventTarget {
   }
 
   private save() {
-    localStorage.setItem(this.storageKey, JSON.stringify(this.files));
+    localStorage.setItem(this.storageKey, JSON.stringify({ version: 1, files: this.files }));
   }
 
   private emitChange(detail: any = {}) {
     this.dispatchEvent(new CustomEvent("change", { detail }));
   }
 
-  list() {
+  fromJSON(json: Record<string, string>) {
+    this.files = json;
+    this.save();
+    this.emitChange({ type: "import" });
+  }
+
+  list(): string[] {
     const paths = Object.keys(this.files).sort();
     const root: FileTreeNode = { name: "", isDirectory: true, path: "", children: [] as any[] };
 
@@ -60,35 +71,32 @@ export class Files extends EventTarget {
       });
     });
 
-    const flatten = (node: any, result: any[] = []) => {
-      node.children.sort((a: any, b: any) => {
+    const result: string[] = [];
+    const flatten = (node: FileTreeNode) => {
+      node.children.sort((a, b) => {
         if (a.isDirectory && !b.isDirectory) return -1;
         if (!a.isDirectory && b.isDirectory) return 1;
         return a.name.localeCompare(b.name);
       });
 
-      node.children.forEach((child: any) => {
-        result.push(child);
-        if (child.isDirectory) flatten(child, result);
+      node.children.forEach((child) => {
+        result.push(child.isDirectory ? child.path + "/" : child.path);
+        if (child.isDirectory) flatten(child);
       });
-      return result;
     };
 
-    return flatten(root);
+    flatten(root);
+    return result;
   }
 
   read(path: string): string {
-    const file = this.files[path];
-    if (!file) throw new Error(`File not found: ${path}`);
-    return file.content;
+    const content = this.files[path];
+    if (content == null) throw new Error(`File not found: ${path}`);
+    return content;
   }
 
-  write(path: string, content: string, type = "text"): void {
-    if (this.files[path]) {
-      this.files[path].content = content;
-    } else {
-      this.files[path] = { type, content };
-    }
+  write(path: string, content: string): void {
+    this.files[path] = content;
     this.save();
     this.emitChange({ type: "write", path });
   }
@@ -117,10 +125,6 @@ export class Files extends EventTarget {
     this.emitChange({ type: "move", oldPath, newPath });
   }
 
-  getFileType(path: string): string {
-    return this.files[path]?.type || "text";
-  }
-
   reset() {
     this.files = getDefaultFiles();
     this.save();
@@ -130,9 +134,7 @@ export class Files extends EventTarget {
 
 function getDefaultFiles() {
   return {
-    "index.html": {
-      type: "html",
-      content: `<!DOCTYPE html>
+    "index.html": `<!DOCTYPE html>
 <html>
 <head>
     <link rel="stylesheet" href="src/main.css">
@@ -147,10 +149,8 @@ function getDefaultFiles() {
     <script src="src/main.js"></script>
 </body>
 </html>`,
-    },
-    "src/main.css": {
-      type: "css",
-      content: `body {
+
+    "src/main.css": `body {
     font-family: system-ui, sans-serif;
     background: #f0f2f5;
     display: flex;
@@ -184,15 +184,12 @@ button {
 button:hover {
     background: #0056b3;
 }`,
-    },
-    "src/main.js": {
-      type: "js",
-      content: `document.getElementById("magic-btn").onclick = () => {
+
+    "src/main.js": `document.getElementById("magic-btn").onclick = () => {
     const colors = ["#ffadad", "#ffd6a5", "#fdffb6", "#caffbf", "#9bf6ff", "#a0c4ff", "#bdb2ff", "#ffc6ff"];
     const randomColor = colors[Math.floor(Math.random() * colors.length)];
     document.body.style.backgroundColor = randomColor;
     console.log("Magic color applied!");
 };`,
-    },
   };
 }

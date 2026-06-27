@@ -4,12 +4,6 @@ import { type Files, type FileTreeNode } from "./fs";
 import { h } from "./h";
 import { state } from "./state";
 
-interface FileInfo {
-  name: string;
-  path: string;
-  isDirectory: boolean;
-}
-
 function resolvePath(currentPath: string, inputPath: string): string {
   if (inputPath.startsWith("/")) {
     return inputPath.substring(1);
@@ -62,10 +56,37 @@ async function downloadProjectAsZip(fs: Files) {
   }
 }
 
+async function saveToLocalServer(fs: Files) {
+  try {
+    const files = (fs as any).files;
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("local-edit");
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const response = await fetch("/@swing/src", {
+      method: "PATCH",
+      headers: headers,
+      body: JSON.stringify(files),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server responded with ${response.status}`);
+    }
+    alert("Project saved to local server successfully!");
+  } catch (e: any) {
+    console.error(e);
+    alert(`Failed to save project: ${e.message}`);
+  }
+}
+
 export function renderSidebar(
   fs: Files,
-  onOpen: (file: FileInfo, isNew?: boolean) => void,
-  onRename: (li: HTMLElement, file: FileInfo) => void,
+  onOpen: (path: string, isNew?: boolean) => void,
+  onRename: (li: HTMLElement, path: string) => void,
   onDelete: (path: string) => void,
 ): void {
   const list = document.getElementById("file-list");
@@ -114,7 +135,7 @@ export function renderSidebar(
           const text = await file.text();
           fs.write(path, text);
           state.updateViewContent(path, text);
-          onOpen({ name: file.name, path, isDirectory: false });
+          onOpen(path);
         }
         return;
       }
@@ -124,7 +145,7 @@ export function renderSidebar(
         const text = await file.text();
         fs.write(file.name, text);
         state.updateViewContent(file.name, text);
-        onOpen({ name: file.name, path: file.name, isDirectory: false });
+        onOpen(file.name);
       }
 
       item.getAsString((text) => {
@@ -179,10 +200,10 @@ export function renderSidebar(
               ? {}
               : {
                   "data-filename": child.path,
-                  onclick: () => onOpen(child as FileInfo),
+                  onclick: () => onOpen(child.path),
                   ondblclick: (e: Event) => {
                     e.stopPropagation();
-                    onRename(li, child as FileInfo);
+                    onRename(li, child.path);
                   },
                 }),
           },
@@ -194,6 +215,9 @@ export function renderSidebar(
       });
     };
     renderTree(root);
+
+    const params = new URLSearchParams(window.location.search);
+    const hasLocalEdit = params.get("local-edit") !== null;
 
     const actions = h(
       "div",
@@ -208,7 +232,7 @@ export function renderSidebar(
             class: "sidebar-btn",
             onclick: () => {
               const name = prompt("Enter file name:");
-              if (name) onOpen({ name, path: name, isDirectory: false }, true);
+              if (name) onOpen(name, true);
             },
           },
           ["+ New File"],
@@ -234,6 +258,18 @@ export function renderSidebar(
           },
           ["📦 Download Project (.zip)"],
         ),
+        ...(hasLocalEdit
+          ? [
+              h(
+                "button",
+                {
+                  class: "sidebar-btn",
+                  onclick: () => saveToLocalServer(fs),
+                },
+                ["💾 Save to Local Server"],
+              ),
+            ]
+          : []),
         h(
           "button",
           {
@@ -264,12 +300,12 @@ export function renderSidebar(
 
 export function enterRenameMode(
   li: HTMLElement,
-  file: FileInfo,
-  onSave: (file: FileInfo, newValue: string) => void,
+  path: string,
+  onSave: (path: string, newValue: string) => void,
 ): void {
   const input = h("input", {
     type: "text",
-    value: file.name,
+    value: path,
     style: "font-size:12px; width:80px;",
     onkeydown: (e: KeyboardEvent) => {
       if (e.key === "Enter") save();
@@ -289,8 +325,8 @@ export function enterRenameMode(
     if (isSaved) return;
     isSaved = true;
     const val = input.value.trim();
-    if (val && val !== file.name) {
-      onSave(file, val);
+    if (val && val !== path) {
+      onSave(path, val);
     }
   }
 }

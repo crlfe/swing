@@ -6,13 +6,9 @@ import { renderChat } from "./ui-chat";
 import { enterRenameMode, renderSidebar, resolvePath } from "./ui-sidebar";
 import { activateTab, addTab, removeTabUI, updateTabLabel } from "./ui-tabs";
 
-interface FileInfo {
-  path: string;
-  isDirectory: boolean;
-  name: string;
-}
-
 const fs = new Files("swing_editor_files");
+
+console.log("Testing!")
 
 function updateWorkspaceVisibility(): void {
   const workspace = document.getElementById("workspace");
@@ -28,17 +24,17 @@ function switchTab(fileName: string): void {
     const el = item as HTMLElement;
     el.classList.toggle("active", el.dataset.filename === fileName);
   });
-  refreshPreview(state.activeHtmlFile, fs, state.views);
+  // refreshPreview(state.activeHtmlFile, fs, state.views);
   const view = state.getView(fileName);
   if (view) {
     view.requestMeasure();
   }
 }
 
-function handleFileOpen(file: FileInfo, isNew = false): void {
+function handleFileOpen(path: string, isNew = false): void {
   if (isNew) {
     try {
-      fs.write(file.path, "");
+      fs.write(path, "");
     } catch (e: any) {
       alert(e.message);
       return;
@@ -46,8 +42,8 @@ function handleFileOpen(file: FileInfo, isNew = false): void {
     initSidebar(); // Re-render sidebar to show the new file
   }
 
-  if (!state.getView(file.path)) {
-    const container = addTab(file, switchTab, (path: string) => {
+  if (!state.getView(path)) {
+    const container = addTab(path, switchTab, (path: string) => {
       removeTabUI(path);
       const view = state.getView(path);
       if (view) {
@@ -65,23 +61,22 @@ function handleFileOpen(file: FileInfo, isNew = false): void {
     });
 
     const view = createEditor(
-      file.path,
-      fs.read(file.path),
+      path,
+      fs.read(path),
       (content: string) => {
-        fs.write(file.path, content);
-        debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
+        fs.write(path, content);
+        // debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
       },
       container,
     );
-    state.registerView(file.path, view);
+    state.registerView(path, view);
   }
-  switchTab(file.path);
+  switchTab(path);
   updateWorkspaceVisibility();
 }
 
-function handleRename(li: HTMLElement, file: FileInfo): void {
-  enterRenameMode(li, file, (oldFile: FileInfo, newValue: string) => {
-    const oldPath = oldFile.path;
+function handleRename(li: HTMLElement, path: string): void {
+  enterRenameMode(li, path, (oldPath: string, newValue: string) => {
     const newPath = resolvePath(oldPath, newValue);
     try {
       fs.move(oldPath, newPath);
@@ -94,7 +89,7 @@ function handleRename(li: HTMLElement, file: FileInfo): void {
         if (btn) btn.onclick = () => switchTab(newPath);
       }
       if (state.activeFile === oldPath) state.setActiveFile(newPath);
-      refreshPreview(state.activeHtmlFile, fs, state.views);
+      // refreshPreview(state.activeHtmlFile, fs, state.views);
     } catch (e: any) {
       alert(e.message);
     }
@@ -127,20 +122,57 @@ function initPreviewToggle(): void {
   const container = document.getElementById("preview-container");
   if (!btn || !container) return;
 
-  btn.onclick = () => {
-    const isCollapsed = container.classList.toggle("collapsed");
-    btn.innerText = isCollapsed ? "«" : "»";
-    document.body.classList.toggle("preview-collapsed", isCollapsed);
-  };
+  // btn.onclick = () => {
+  //   const isCollapsed = container.classList.toggle("collapsed");
+  //   btn.innerText = isCollapsed ? "«" : "»";
+  //   document.body.classList.toggle("preview-collapsed", isCollapsed);
+  // };
+
+  // Force collapsed state for now
+  container.classList.add("collapsed");
+  btn.innerText = "«";
+  document.body.classList.add("preview-collapsed");
 }
 
 initSidebar();
 initPreviewToggle();
 renderChat(fs);
-const initialFiles = fs.list().filter((f: FileInfo) => !f.isDirectory);
+const initialFiles = fs.list().filter((path) => !path.endsWith("/"));
 if (initialFiles.length > 0) {
   handleFileOpen(initialFiles[0]);
 } else {
   updateWorkspaceVisibility();
 }
-refreshPreview(state.activeHtmlFile, fs, state.views);
+// refreshPreview(state.activeHtmlFile, fs, state.views);
+
+if (import.meta.hot) {
+  // This code will be deleted by the build process.
+  async function initializeLocalEdit() {
+    const params = new URLSearchParams(window.location.search);
+    const localEdit = params.get("local-edit");
+    if (!localEdit) return;
+
+    try {
+      const response = await fetch("/@swing/src", {
+        headers: {
+          Authorization: `Bearer ${localEdit}`,
+        },
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      fs.fromJSON(await response.json());
+
+      initSidebar();
+
+      const btn = document.getElementById("toggle-preview-btn");
+      const container = document.getElementById("preview-container");
+      if (btn && container) {
+        container.classList.add("collapsed");
+        btn.innerText = "«";
+        document.body.classList.add("preview-collapsed");
+      }
+    } catch (e) {
+      console.error("Failed to fetch files from local-edit", e);
+    }
+  }
+  initializeLocalEdit();
+}
