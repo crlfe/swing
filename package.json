@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
+    "preview": "vite preview",
     "format": "oxfmt",
     "check": "oxlint && oxfmt --check",
     "test": "vitest"

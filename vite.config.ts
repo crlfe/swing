@@ -17,7 +17,7 @@ export default defineConfig({
         paths: Object.fromEntries(
           Object.entries(packageJson.dependencies).map(([name, version]) => [
             name,
-            `https://esm.sh/${name}@${version}`,
+            `https://esm.sh/${name}@${version.replace(/^\^/, "")}`,
           ]),
         ),
       },
