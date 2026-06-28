@@ -5,7 +5,7 @@ export const listDirectoryTreeTool: Tool = {
     type: "function",
     function: {
       name: "list_directory_tree",
-      description: "Lists the entire directory tree",
+      description: "Recursively lists a directory tree",
       parameters: {
         type: "object",
         properties: {},
@@ -18,7 +18,7 @@ export const listDirectoryTreeTool: Tool = {
       logInfo("Listing directory tree...");
     }
     try {
-      const tree = fs.list();
+      const root = fs.getTree();
 
       const formatNode = (node: any, prefix = "", isLast = true) => {
         const connector = isLast ? "└── " : "├── ";
@@ -36,9 +36,8 @@ export const listDirectoryTreeTool: Tool = {
         return line;
       };
 
-      const rootChildren = tree;
-      const result = rootChildren
-        .map((node: any, index: number) => formatNode(node, "", index === rootChildren.length - 1))
+      const result = root.children
+        .map((node: any, index: number) => formatNode(node, "", index === root.children.length - 1))
         .join("\n");
 
       return result || "The directory is empty.";

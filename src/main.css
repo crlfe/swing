@@ -199,6 +199,8 @@ body.preview-collapsed #main-content {
   flex-grow: 1;
 }
 .chat-content {
+  font-family: monospace;
+  white-space: pre-line;
   flex-grow: 1;
   padding: 15px;
   font-size: 14px;

@@ -44,9 +44,9 @@ export class Files extends EventTarget {
     this.emitChange({ type: "import" });
   }
 
-  list(): string[] {
+  getTree(): FileTreeNode {
     const paths = Object.keys(this.files).sort();
-    const root: FileTreeNode = { name: "", isDirectory: true, path: "", children: [] as any[] };
+    const root: FileTreeNode = { name: "", isDirectory: true, path: "", children: [] };
 
     paths.forEach((path) => {
       const parts = path.split("/");
@@ -71,14 +71,23 @@ export class Files extends EventTarget {
       });
     });
 
-    const result: string[] = [];
-    const flatten = (node: FileTreeNode) => {
+    const sortChildren = (node: FileTreeNode) => {
       node.children.sort((a, b) => {
         if (a.isDirectory && !b.isDirectory) return -1;
         if (!a.isDirectory && b.isDirectory) return 1;
         return a.name.localeCompare(b.name);
       });
+      node.children.forEach(sortChildren);
+    };
 
+    sortChildren(root);
+    return root;
+  }
+
+  list(): string[] {
+    const root = this.getTree();
+    const result: string[] = [];
+    const flatten = (node: FileTreeNode) => {
       node.children.forEach((child) => {
         result.push(child.isDirectory ? child.path + "/" : child.path);
         if (child.isDirectory) flatten(child);

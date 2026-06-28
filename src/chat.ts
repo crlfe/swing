@@ -3,7 +3,9 @@ import { deleteFileTool } from "./tools/delete_file";
 import { listDirectoryTreeTool } from "./tools/list_directory_tree";
 import { moveFileTool } from "./tools/move_file";
 import { readFileTool } from "./tools/read_file";
+import { readSkeletonTool } from "./tools/read_skeleton";
 import { writeFileTool } from "./tools/write_file";
+import { readBlockTool } from "./tools/read_block";
 import type { Tool, ToolCall, ToolOptions } from "./types";
 
 interface ChatConfig {
@@ -31,6 +33,8 @@ export async function* sendMessageStream(messages: Message[], config: ChatConfig
     [deleteFileTool.definition.function.name]: deleteFileTool,
     [moveFileTool.definition.function.name]: moveFileTool,
     [listDirectoryTreeTool.definition.function.name]: listDirectoryTreeTool,
+    [readSkeletonTool.definition.function.name]: readSkeletonTool,
+    [readBlockTool.definition.function.name]: readBlockTool,
   };
 
   const tools = Object.values(toolRegistry).map((t) => t.definition);
@@ -160,7 +164,7 @@ export async function* sendMessageStream(messages: Message[], config: ChatConfig
     if (accumulatedMessage.tool_calls && accumulatedMessage.tool_calls.length > 0) {
       const toolResults: Message[] = [];
       for (const toolCall of accumulatedMessage.tool_calls) {
-        yield "\n[Tool: ${toolCall.function.name}]... ";
+        yield `\n[Tool: ${toolCall.function.name}]... `;
 
         const result = await executeTool(toolCall, { logInfo: () => {}, fs });
 
@@ -176,6 +180,10 @@ export async function* sendMessageStream(messages: Message[], config: ChatConfig
           detail = `moving ${args.oldPath} to ${args.newPath}`;
         } else if (toolCall.function.name === "list_directory_tree") {
           detail = `listing tree`;
+        } else if (toolCall.function.name === "read_skeleton") {
+          detail = `reading skeleton of ${args.path}`;
+        } else if (toolCall.function.name === "read_block") {
+          detail = `reading block in ${args.path} starting with: ${args.line}`;
         }
 
         yield `Executing ${toolCall.function.name} ${detail}.\n`;
