@@ -1,4 +1,4 @@
-import { h } from "./h.js";
+import { h } from "./h.ts";
 
 export function addTab(
   path: string,

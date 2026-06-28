@@ -1,6 +1,6 @@
-import { sendMessageStream, getSystemPrompt } from "./chat";
-import { type Files } from "./fs";
-import { h } from "./h";
+import { sendMessageStream, getSystemPrompt } from "./chat.ts";
+import { type Files } from "./fs.ts";
+import { h } from "./h.ts";
 
 interface ChatConfig {
   url: string;

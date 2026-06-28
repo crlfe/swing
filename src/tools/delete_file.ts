@@ -1,4 +1,4 @@
-import { type Tool } from "../types";
+import { type Tool } from "../types.ts";
 
 interface DeleteFileArgs {
   path: string;

@@ -1,8 +1,8 @@
 import JSZip from "jszip";
 
-import { type Files, type FileTreeNode } from "./fs";
-import { h } from "./h";
-import { state } from "./state";
+import { type Files, type FileTreeNode } from "./fs.ts";
+import { h } from "./h.ts";
+import { state } from "./state.ts";
 
 function resolvePath(currentPath: string, inputPath: string): string {
   if (inputPath.startsWith("/")) {

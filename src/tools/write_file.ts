@@ -1,6 +1,6 @@
-import { debouncedRefreshPreview, refreshPreview } from "../preview";
-import { state } from "../state";
-import { type Tool } from "../types";
+import { debouncedRefreshPreview } from "../preview.ts";
+import { state } from "../state.ts";
+import { type Tool } from "../types.ts";
 
 interface WriteFileArgs {
   path: string;

@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 
 import packageJson from "./package.json" with { type: "json" };
-import localEditPlugin from "./vite-plugin-local-edit";
+import localEditPlugin from "./vite-plugin-local-edit.ts";
 
 export default defineConfig({
   base: "",

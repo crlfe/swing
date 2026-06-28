@@ -1,12 +1,12 @@
-import { type Files } from "./fs";
-import { deleteFileTool } from "./tools/delete_file";
-import { listDirectoryTreeTool } from "./tools/list_directory_tree";
-import { moveFileTool } from "./tools/move_file";
-import { readFileTool } from "./tools/read_file";
-import { readSkeletonTool } from "./tools/read_skeleton";
-import { writeFileTool } from "./tools/write_file";
-import { readBlockTool } from "./tools/read_block";
-import type { Tool, ToolCall, ToolOptions } from "./types";
+import { type Files } from "./fs.ts";
+import { deleteFileTool } from "./tools/delete_file.ts";
+import { listDirectoryTreeTool } from "./tools/list_directory_tree.ts";
+import { moveFileTool } from "./tools/move_file.ts";
+import { readBlockTool } from "./tools/read_block.ts";
+import { readFileTool } from "./tools/read_file.ts";
+import { readSkeletonTool } from "./tools/read_skeleton.ts";
+import { writeFileTool } from "./tools/write_file.ts";
+import type { Tool, ToolCall, ToolOptions } from "./types.ts";
 
 interface ChatConfig {
   url: string;

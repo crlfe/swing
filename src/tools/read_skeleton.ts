@@ -1,4 +1,4 @@
-import { type Tool } from "../types";
+import { type Tool } from "../types.ts";
 
 interface ReadSkeletonArgs {
   path: string;
@@ -29,7 +29,7 @@ export const readSkeletonTool: Tool = {
       const content = fs.read(path);
       const lines = content.split("\n");
       const skeleton = lines
-        .filter((line) => line.trim() === "" || !line.startsWith(" ") && !line.startsWith("\t"))
+        .filter((line) => line.trim() === "" || (!line.startsWith(" ") && !line.startsWith("\t")))
         .join("\n");
       return skeleton;
     } catch (e: any) {

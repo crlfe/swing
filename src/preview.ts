@@ -1,5 +1,5 @@
-import { type EditorView } from "./editor";
-import { type Files } from "./fs";
+import { type EditorView } from "./editor.ts";
+import { type Files } from "./fs.ts";
 
 export function refreshPreview(
   activeHtmlFile: string,
@@ -38,7 +38,7 @@ export function refreshPreview(
   if (iframe instanceof HTMLIFrameElement) iframe.srcdoc = bundledHtml;
 }
 
-let previewTimeout: number | undefined;
+let previewTimeout: number | undefined | any /* needed for Node compatibility */;
 export function debouncedRefreshPreview(
   activeHtmlFile: string,
   fs: Files,

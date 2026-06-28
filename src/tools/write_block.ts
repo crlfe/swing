@@ -1,4 +1,4 @@
-import { type Tool } from "../types";
+import { type Tool } from "../types.ts";
 
 interface WriteBlockArgs {
   path: string;
@@ -56,7 +56,7 @@ export const writeBlockTool: Tool = {
 
       const newLines = lines.slice(0, startIndex + 1);
       const contentLines = newContent.split("\n");
-      
+
       const updatedLines = [...newLines, ...contentLines, ...lines.slice(endIndex)];
       fs.write(path, updatedLines.join("\n"));
 

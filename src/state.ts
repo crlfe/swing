@@ -1,4 +1,4 @@
-import { type EditorView, updateEditorContent } from "./editor";
+import { type EditorView, updateEditorContent } from "./editor.ts";
 
 interface AppState {
   views: Record<string, EditorView>;

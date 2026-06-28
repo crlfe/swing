@@ -3,8 +3,8 @@
     "noEmit": true,
 
     "target": "ESNext",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
 
     "strict": true,
     "allowImportingTsExtensions": true,

@@ -1,4 +1,4 @@
-import { type Files } from "./fs";
+import { type Files } from "./fs.ts";
 
 export interface ToolFunctionDefinition {
   name: string;

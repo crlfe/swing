@@ -1,14 +1,13 @@
-import { createEditor } from "./editor";
-import { Files } from "./fs";
-import { debouncedRefreshPreview, refreshPreview } from "./preview";
-import { state } from "./state";
-import { renderChat } from "./ui-chat";
-import { enterRenameMode, renderSidebar, resolvePath } from "./ui-sidebar";
-import { activateTab, addTab, removeTabUI, updateTabLabel } from "./ui-tabs";
+import { createEditor } from "./editor.ts";
+import { Files } from "./fs.ts";
+import { state } from "./state.ts";
+import { renderChat } from "./ui-chat.ts";
+import { enterRenameMode, renderSidebar, resolvePath } from "./ui-sidebar.ts";
+import { activateTab, addTab, removeTabUI, updateTabLabel } from "./ui-tabs.ts";
 
 const fs = new Files("swing_editor_files");
 
-console.log("Testing!")
+console.log("Testing!");
 
 function updateWorkspaceVisibility(): void {
   const workspace = document.getElementById("workspace");
