@@ -1,4 +1,5 @@
 import { type Tool } from "../types.ts";
+import { findBlock } from "./read_block.ts";
 
 interface WriteBlockArgs {
   path: string;
@@ -12,7 +13,7 @@ export const writeBlockTool: Tool = {
     function: {
       name: "write_block",
       description:
-        "Replace a specific logical block of code in a file with new content. It finds a line (e.g., a function signature), identifies the indented block following it, and replaces that block. Use this to make precise edits to large files without overwriting everything.",
+        "Replace a logical block in a file with new content. It finds a line (like a function signature) and replaces the indented block following it. Use this to make precise edits to files without overwriting everything.",
       parameters: {
         type: "object",
         properties: {
@@ -32,27 +33,8 @@ export const writeBlockTool: Tool = {
     try {
       const content = fs.read(path);
       const lines = content.split("\n");
-      let startIndex = -1;
-      let startIndent = -1;
 
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trim().includes(searchLine.trim())) {
-          startIndex = i;
-          startIndent = getIndent(lines[i]);
-          break;
-        }
-      }
-
-      if (startIndex === -1) {
-        return `Line "${searchLine}" not found in ${path}`;
-      }
-
-      let endIndex;
-      for (endIndex = startIndex + 1; endIndex < lines.length; endIndex++) {
-        if (getIndent(lines[endIndex]) <= startIndent) {
-          break;
-        }
-      }
+      let [startIndex, endIndex] = findBlock(lines, searchLine.trim());
 
       const newLines = lines.slice(0, startIndex + 1);
       const contentLines = newContent.split("\n");
@@ -62,11 +44,8 @@ export const writeBlockTool: Tool = {
 
       return `Successfully wrote block in ${path}`;
     } catch (e: any) {
+      console.error(e);
       return `Error writing block in ${path}: ${e.message}`;
     }
   },
 };
-
-function getIndent(line: string): number {
-  return line.match(/^\s*/)?.[0].length ?? 0;
-}

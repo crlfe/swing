@@ -117,6 +117,7 @@ async function run() {
 
   const askQuestion = () => {
     return new Promise<string>((resolve) => {
+      console.log();
       rl.question("> ", (input) => resolve(input));
     });
   };

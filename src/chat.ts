@@ -183,7 +183,7 @@ export async function* sendMessageStream(messages: Message[], config: ChatConfig
         } else if (toolCall.function.name === "read_skeleton") {
           detail = `reading skeleton of ${args.path}`;
         } else if (toolCall.function.name === "read_block") {
-          detail = `reading block in ${args.path} starting with: ${args.line}`;
+          detail = `reading block in ${args.path} starting with: ${args.searchLine}`;
         }
 
         yield `Executing ${toolCall.function.name} ${detail}.\n`;

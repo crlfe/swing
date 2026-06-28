@@ -32,7 +32,7 @@ export const writeFileTool: Tool = {
       fs.write(path, content);
 
       // Update editor view if open
-      if (document) {
+      if ("document" in globalThis) {
         state.updateViewContent(path, content);
         // Update preview
         debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);

@@ -1,20 +1,16 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { fs } from "../src/fs.js";
+import { Files } from "./fs.ts";
 
 describe("Virtual File System", () => {
+  let fs: Files;
   beforeEach(() => {
     // Reset the filesystem state before each test to ensure isolation
-    fs.files = {
-      "index.html": {
-        type: "html",
-        content: "<html><body>Hello</body></html>",
-      },
-      "src/main.js": {
-        type: "js",
-        content: 'console.log("hello");',
-      },
-    };
+    fs = new Files();
+    fs.fromJSON({
+      "index.html": "<html><body>Hello</body></html>",
+      "src/main.js": 'console.log("hello");',
+    });
   });
 
   it("should read a file", () => {
@@ -26,9 +22,8 @@ describe("Virtual File System", () => {
   });
 
   it("should write a new file", () => {
-    fs.write("test.txt", "hello world", "text");
+    fs.write("test.txt", "hello world");
     expect(fs.read("test.txt")).toBe("hello world");
-    expect(fs.getFileType("test.txt")).toBe("text");
   });
 
   it("should update an existing file", () => {
@@ -62,11 +57,9 @@ describe("Virtual File System", () => {
   });
 
   it("should list directory tree correctly", () => {
-    const tree = fs.list();
-    // The fs.list() implementation flattens the tree for the root.
-    // Check if we have nodes for our initial files.
-    const names = tree.map((n) => n.name);
+    const names = fs.list();
     expect(names).toContain("index.html");
-    expect(names).toContain("src");
+    expect(names).toContain("src/");
+    expect(names).toContain("src/main.js");
   });
 });

@@ -11,7 +11,7 @@ export const readBlockTool: Tool = {
     function: {
       name: "read_block",
       description:
-        "Extract a specific logical block of code from a file by searching for a line (like a function signature) and returning all subsequent indented lines. Use this to read only the relevant part of a large file rather than the entire thing.",
+        "Extract a logical block from a file. It finds a line (like a function signature) and returns the indented block following it. Use this to read precise parts of a file rather than the entire thing.",
       parameters: {
         type: "object",
         properties: {
@@ -30,28 +30,8 @@ export const readBlockTool: Tool = {
     try {
       const content = fs.read(path);
       const lines = content.split("\n");
-      let startIndex = -1;
-      let startIndent = -1;
 
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trim().includes(searchLine.trim())) {
-          startIndex = i;
-          startIndent = getIndent(lines[i]);
-          break;
-        }
-      }
-
-      if (startIndex === -1) {
-        return `Line "${searchLine}" not found in ${path}`;
-      }
-
-      let endIndex;
-      for (endIndex = startIndex + 1; endIndex < lines.length; endIndex++) {
-        if (getIndent(lines[endIndex]) <= startIndent) {
-          break;
-        }
-      }
-
+      let [startIndex, endIndex] = findBlock(lines, searchLine.trim());
       return lines.slice(startIndex + 1, endIndex).join("\n");
     } catch (e: any) {
       return `Error reading block in ${path}: ${e.message}`;
@@ -59,6 +39,33 @@ export const readBlockTool: Tool = {
   },
 };
 
-function getIndent(line: string): number {
+export function findBlock(lines: string[], searchLineTrimmed: string): [number, number] {
+  let startIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().startsWith(searchLineTrimmed)) {
+      if (startIndex < 0) {
+        startIndex = i;
+      } else {
+        throw new Error("searchLine matched multiple locations");
+      }
+    }
+  }
+  if (startIndex < 0) {
+    throw new Error("searchLine not found");
+  }
+
+  const startIndent = getIndent(lines[startIndex]);
+  let endIndex = lines.length;
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    if (lines[i].trim() && getIndent(lines[i]) <= startIndent) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  return [startIndex, endIndex];
+}
+
+export function getIndent(line: string): number {
   return line.match(/^\s*/)?.[0].length ?? 0;
 }
