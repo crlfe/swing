@@ -1,13 +1,40 @@
 import { createEditor } from "./editor.ts";
+import { getExampleFiles } from "./fs-example.ts";
 import { Files } from "./fs.ts";
 import { state } from "./state.ts";
 import { renderChat } from "./ui-chat.ts";
 import { enterRenameMode, renderSidebar, resolvePath } from "./ui-sidebar.ts";
 import { activateTab, addTab, removeTabUI, updateTabLabel } from "./ui-tabs.ts";
 
-const fs = new Files("swing_editor_files");
+const fs = new Files();
+{
+  const STORAGE_KEY = "swing_editor_files";
+  const STORAGE_VERSION = 1;
 
-console.log("Testing!");
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (parsed.version === STORAGE_VERSION) {
+        fs.fromJSON(parsed.files);
+      } else {
+        console.error("Ignoring incompatible saved project");
+        fs.fromJSON(getExampleFiles());
+      }
+    } catch (e) {
+      console.error("Failed to load files from localStorage", e);
+    }
+  } else {
+    fs.fromJSON(getExampleFiles());
+  }
+
+  fs.addEventListener("change", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ version: STORAGE_VERSION, files: fs.toJSON() }),
+    );
+  });
+}
 
 function updateWorkspaceVisibility(): void {
   const workspace = document.getElementById("workspace");
@@ -143,35 +170,3 @@ if (initialFiles.length > 0) {
   updateWorkspaceVisibility();
 }
 // refreshPreview(state.activeHtmlFile, fs, state.views);
-
-if (import.meta.hot) {
-  // This code will be deleted by the build process.
-  async function initializeLocalEdit() {
-    const params = new URLSearchParams(window.location.search);
-    const localEdit = params.get("local-edit");
-    if (!localEdit) return;
-
-    try {
-      const response = await fetch("/@swing/src", {
-        headers: {
-          Authorization: `Bearer ${localEdit}`,
-        },
-      });
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      fs.fromJSON(await response.json());
-
-      initSidebar();
-
-      const btn = document.getElementById("toggle-preview-btn");
-      const container = document.getElementById("preview-container");
-      if (btn && container) {
-        container.classList.add("collapsed");
-        btn.innerText = "«";
-        document.body.classList.add("preview-collapsed");
-      }
-    } catch (e) {
-      console.error("Failed to fetch files from local-edit", e);
-    }
-  }
-  initializeLocalEdit();
-}

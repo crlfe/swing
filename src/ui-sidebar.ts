@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 
+import { getExampleFiles } from "./fs-example.ts";
 import { type Files, type FileTreeNode } from "./fs.ts";
 import { h } from "./h.ts";
 import { state } from "./state.ts";
@@ -53,33 +54,6 @@ async function downloadProjectAsZip(fs: Files) {
   } catch (e) {
     console.error(e);
     alert("Failed to download project as zip");
-  }
-}
-
-async function saveToLocalServer(fs: Files) {
-  try {
-    const files = (fs as any).files;
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("local-edit");
-
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const response = await fetch("/@swing/src", {
-      method: "PATCH",
-      headers: headers,
-      body: JSON.stringify(files),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Server responded with ${response.status}`);
-    }
-    alert("Project saved to local server successfully!");
-  } catch (e: any) {
-    console.error(e);
-    alert(`Failed to save project: ${e.message}`);
   }
 }
 
@@ -157,38 +131,6 @@ export function renderSidebar(
   const updateTree = () => {
     list.replaceChildren();
 
-    const allFiles = Object.keys((fs as any).files).sort();
-    const root: FileTreeNode = { name: "", children: [], isDirectory: true, path: "" };
-
-    allFiles.forEach((path) => {
-      const parts = path.split("/");
-      let current = root;
-      let accumulatedPath = "";
-      parts.forEach((part, index) => {
-        accumulatedPath += (accumulatedPath ? "/" : "") + part;
-        const isLast = index === parts.length - 1;
-        let child = current.children.find((c) => c.name === part);
-        if (!child) {
-          child = { name: part, path: accumulatedPath, isDirectory: !isLast, children: [] };
-          current.children.push(child);
-        }
-        current = child;
-      });
-    });
-
-    const sortChildren = (node: FileTreeNode): void => {
-      if (!node.children) return;
-      node.children.sort((a, b) => {
-        if (a.isDirectory && !b.isDirectory) return -1;
-        if (!a.isDirectory && b.isDirectory) return 1;
-        return a.name.localeCompare(b.name);
-      });
-      node.children.forEach((child) => {
-        if (child.isDirectory) sortChildren(child);
-      });
-    };
-    sortChildren(root);
-
     const renderTree = (node: FileTreeNode, level = 0): void => {
       node.children.forEach((child) => {
         const li = h(
@@ -214,10 +156,7 @@ export function renderSidebar(
         if (child.isDirectory) renderTree(child, level + 1);
       });
     };
-    renderTree(root);
-
-    const params = new URLSearchParams(window.location.search);
-    const hasLocalEdit = params.get("local-edit") !== null;
+    renderTree(fs.getTree());
 
     const actions = h(
       "div",
@@ -258,18 +197,6 @@ export function renderSidebar(
           },
           ["📦 Download Project (.zip)"],
         ),
-        ...(hasLocalEdit
-          ? [
-              h(
-                "button",
-                {
-                  class: "sidebar-btn",
-                  onclick: () => saveToLocalServer(fs),
-                },
-                ["💾 Save to Local Server"],
-              ),
-            ]
-          : []),
         h(
           "button",
           {
@@ -278,10 +205,10 @@ export function renderSidebar(
             onclick: () => {
               if (
                 confirm(
-                  "Are you sure you want to reset the project to default? All current changes will be lost.",
+                  "Are you sure you want to reset the project? All current changes will be lost.",
                 )
               ) {
-                fs.reset();
+                fs.fromJSON(getExampleFiles());
                 location.reload();
               }
             },

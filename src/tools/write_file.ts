@@ -32,9 +32,11 @@ export const writeFileTool: Tool = {
       fs.write(path, content);
 
       // Update editor view if open
-      state.updateViewContent(path, content);
-      // Update preview
-      debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
+      if (document) {
+        state.updateViewContent(path, content);
+        // Update preview
+        debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
+      }
 
       return `Successfully wrote to ${path}`;
     } catch (e: any) {

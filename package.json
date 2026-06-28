@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "terminal": "node ./src/cli/terminal.ts",
     "dev": "vite",
     "preview": "vite preview",
     "format": "oxfmt",

@@ -1,11 +1,9 @@
 import { defineConfig } from "vite";
 
 import packageJson from "./package.json" with { type: "json" };
-import localEditPlugin from "./vite-plugin-local-edit.ts";
 
 export default defineConfig({
   base: "",
-  plugins: [localEditPlugin()],
   build: {
     rolldownOptions: {
       // Externalize all runtime dependencies to keep our builds small.
