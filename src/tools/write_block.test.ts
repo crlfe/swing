@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
 import { Files } from "../fs.ts";
-import { readBlockTool } from "./read_block.ts";
-import { writeBlockTool } from "./write_block.ts";
+import readBlockTool from "./read_block.ts";
+import writeBlockTool from "./write_block.ts";
 
 describe("readBlockTool and writeBlockTool with blank lines", () => {
   let fs: Files;

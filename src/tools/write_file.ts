@@ -7,7 +7,7 @@ interface WriteFileArgs {
   content: string;
 }
 
-export const writeFileTool: Tool = {
+const writeFileTool: Tool = {
   definition: {
     type: "function",
     function: {
@@ -44,3 +44,5 @@ export const writeFileTool: Tool = {
     }
   },
 };
+
+export default writeFileTool;

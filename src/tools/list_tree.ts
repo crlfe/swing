@@ -1,6 +1,6 @@
 import { type Tool } from "../types.ts";
 
-export const listDirectoryTreeTool: Tool = {
+const listTreeTool: Tool = {
   definition: {
     type: "function",
     function: {
@@ -46,3 +46,5 @@ export const listDirectoryTreeTool: Tool = {
     }
   },
 };
+
+export default listTreeTool;

@@ -5,7 +5,7 @@ interface ReadBlockArgs {
   searchLine: string;
 }
 
-export const readBlockTool: Tool = {
+const readBlockTool: Tool = {
   definition: {
     type: "function",
     function: {
@@ -25,7 +25,7 @@ export const readBlockTool: Tool = {
   execute: async (args, { logInfo, fs }) => {
     const { path, searchLine } = args as ReadBlockArgs;
     if (logInfo) {
-      logInfo(`Reading block in ${path} starting with: ${searchLine}`);
+      logInfo(`Reading block in ${path} starting with: ${JSON.stringify(searchLine)}`);
     }
     try {
       const content = fs.read(path);
@@ -69,3 +69,5 @@ export function findBlock(lines: string[], searchLineTrimmed: string): [number, 
 export function getIndent(line: string): number {
   return line.match(/^\s*/)?.[0].length ?? 0;
 }
+
+export default readBlockTool;

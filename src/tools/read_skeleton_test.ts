@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
 import { Files } from "../fs.ts";
-import { readSkeletonTool } from "./read_skeleton.ts";
+import readSkeletonTool from "./read_skeleton.ts";
 
 describe("readSkeletonTool", () => {
   let fs: Files;

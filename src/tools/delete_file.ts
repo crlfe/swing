@@ -4,7 +4,7 @@ interface DeleteFileArgs {
   path: string;
 }
 
-export const deleteFileTool: Tool = {
+const deleteFileTool: Tool = {
   definition: {
     type: "function",
     function: {
@@ -32,3 +32,5 @@ export const deleteFileTool: Tool = {
     }
   },
 };
+
+export default deleteFileTool;

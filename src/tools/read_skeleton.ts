@@ -4,7 +4,7 @@ interface ReadSkeletonArgs {
   path: string;
 }
 
-export const readSkeletonTool: Tool = {
+const readSkeletonTool: Tool = {
   definition: {
     type: "function",
     function: {
@@ -37,3 +37,5 @@ export const readSkeletonTool: Tool = {
     }
   },
 };
+
+export default readSkeletonTool;

@@ -7,7 +7,7 @@ interface WriteBlockArgs {
   newContent: string;
 }
 
-export const writeBlockTool: Tool = {
+const writeBlockTool: Tool = {
   definition: {
     type: "function",
     function: {
@@ -28,7 +28,7 @@ export const writeBlockTool: Tool = {
   execute: async (args, { logInfo, fs }) => {
     const { path, searchLine, newContent } = args as WriteBlockArgs;
     if (logInfo) {
-      logInfo(`Writing block in ${path} starting with: ${searchLine}`);
+      logInfo(`Writing block in ${path} starting with: ${JSON.stringify(searchLine)}`);
     }
     try {
       const content = fs.read(path);
@@ -49,3 +49,5 @@ export const writeBlockTool: Tool = {
     }
   },
 };
+
+export default writeBlockTool;

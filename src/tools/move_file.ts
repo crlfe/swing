@@ -5,7 +5,7 @@ interface MoveFileArgs {
   newPath: string;
 }
 
-export const moveFileTool: Tool = {
+const moveFileTool: Tool = {
   definition: {
     type: "function",
     function: {
@@ -34,3 +34,5 @@ export const moveFileTool: Tool = {
     }
   },
 };
+
+export default moveFileTool;

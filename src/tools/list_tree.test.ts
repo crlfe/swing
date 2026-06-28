@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { listDirectoryTreeTool } from "./list_directory_tree.ts";
+import listTreeTool from "./list_tree.ts";
 
 describe("listDirectoryTreeTool", () => {
   const mockFs = {
@@ -13,7 +13,7 @@ describe("listDirectoryTreeTool", () => {
   };
 
   it("should return 'The directory is empty.' for an empty directory", async () => {
-    const result = await listDirectoryTreeTool.execute({}, { fs: mockFs as any });
+    const result = await listTreeTool.execute({}, { fs: mockFs as any });
     expect(result).toBe("The directory is empty.");
   });
 
@@ -28,10 +28,7 @@ describe("listDirectoryTreeTool", () => {
       ],
     };
 
-    const result = await listDirectoryTreeTool.execute(
-      {},
-      { fs: { getTree: () => mockTree } as any },
-    );
+    const result = await listTreeTool.execute({}, { fs: { getTree: () => mockTree } as any });
     expect(result).toBe("├── file1.txt\n└── file2.txt");
   });
 
@@ -54,10 +51,7 @@ describe("listDirectoryTreeTool", () => {
       ],
     };
 
-    const result = await listDirectoryTreeTool.execute(
-      {},
-      { fs: { getTree: () => mockTree } as any },
-    );
+    const result = await listTreeTool.execute({}, { fs: { getTree: () => mockTree } as any });
     const expected = "├── src\n│   ├── main.ts\n│   └── utils.ts\n└── README.md";
     expect(result).toBe(expected);
   });
@@ -69,7 +63,7 @@ describe("listDirectoryTreeTool", () => {
       },
     };
 
-    const result = await listDirectoryTreeTool.execute({}, { fs: errorFs as any });
+    const result = await listTreeTool.execute({}, { fs: errorFs as any });
     expect(result).toBe("Error listing directory tree: Filesystem error");
   });
 });

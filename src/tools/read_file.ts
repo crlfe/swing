@@ -4,7 +4,7 @@ interface ReadFileArgs {
   path: string;
 }
 
-export const readFileTool: Tool = {
+const readFileTool: Tool = {
   definition: {
     type: "function",
     function: {
@@ -31,3 +31,5 @@ export const readFileTool: Tool = {
     }
   },
 };
+
+export default readFileTool;

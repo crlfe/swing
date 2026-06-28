@@ -91,6 +91,10 @@ async function run() {
     key: chatKey,
     stream: true,
     fs: new Files(),
+
+    logInfo(msg: string) {
+      console.log(msg);
+    },
   };
 
   try {
