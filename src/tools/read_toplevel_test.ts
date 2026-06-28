@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
 import { Files } from "../fs.ts";
-import readSkeletonTool from "./read_skeleton.ts";
+import readToplevelTool from "./read_toplevel.ts";
 
-describe("readSkeletonTool", () => {
+describe("readToplevelTool", () => {
   let fs: Files;
 
   beforeEach(() => {
@@ -34,13 +34,13 @@ export function myFunc() {
     );
   });
 
-  it("should extract non-indented lines (skeleton)", async () => {
+  it("should extract non-indented lines (toplevel)", async () => {
     const args = {
       path: "test.ts",
     };
-    const result = await readSkeletonTool.execute(args, { fs });
+    const result = await readToplevelTool.execute(args, { fs });
 
-    // Expected skeleton:
+    // Expected toplevel:
     // import { Tool } from "./types.ts";
     //
     // export class MyClass {
@@ -68,7 +68,7 @@ export function myFunc() {
     const args = {
       path: "non_existent.ts",
     };
-    const result = await readSkeletonTool.execute(args, { fs });
+    const result = await readToplevelTool.execute(args, { fs });
     expect(result).toSatisfy((m) => m.startsWith("Error reading file non_existent.ts"));
   });
 
@@ -77,7 +77,7 @@ export function myFunc() {
     const args = {
       path: "empty.ts",
     };
-    const result = await readSkeletonTool.execute(args, { fs });
+    const result = await readToplevelTool.execute(args, { fs });
     expect(result).toBe("");
   });
 });
