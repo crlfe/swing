@@ -138,6 +138,7 @@ export async function* sendMessageStream(messages: Message[], config: ChatConfig
                   accumulatedMessage.tool_calls = accumulatedMessage.tool_calls || [];
                   accumulatedMessage.tool_calls[index] = {
                     id: "",
+                    type: "function",
                     function: { name: "", arguments: "" },
                   };
                 }

@@ -7,7 +7,7 @@ export interface ToolFunctionDefinition {
 }
 
 export interface ToolDefinition {
-  type: string;
+  type: "function";
   function: ToolFunctionDefinition;
 }
 
@@ -25,6 +25,7 @@ export interface Tool {
 
 export interface ToolCall {
   id: string;
+  type: string;
   function: {
     name: string;
     arguments: string;
