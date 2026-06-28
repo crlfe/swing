@@ -21,6 +21,10 @@ export function renderChat(fs: Files): void {
 
   container.innerHTML = "";
 
+  const savedUrl = localStorage.getItem("chat-url") || "http://localhost:11434/v1/chat/completions";
+  const savedModel = localStorage.getItem("chat-model") || "gemma4:31b-cloud";
+  const savedKey = localStorage.getItem("chat-key") || "";
+
   const overlay = h("div", { class: "chat-config-overlay", id: "chat-config-overlay" }, [
     h("div", { class: "chat-config-container" }, [
       h("div", { class: "chat-config-title" }, ["Chat Configuration"]),
@@ -30,16 +34,16 @@ export function renderChat(fs: Files): void {
           h("input", {
             type: "text",
             id: "chat-url",
-            value: "http://localhost:11434/v1/chat/completions",
+            value: savedUrl,
           }),
         ]),
         h("label", {}, [
           "Model: ",
-          h("input", { type: "text", id: "chat-model", value: "gemma4:31b-cloud" }),
+          h("input", { type: "text", id: "chat-model", value: savedModel }),
         ]),
         h("label", {}, [
           "Key: ",
-          h("input", { type: "password", id: "chat-key", value: "" }),
+          h("input", { type: "password", id: "chat-key", value: savedKey }),
           "do not use for local ollama",
         ]),
       ]),
@@ -66,6 +70,14 @@ export function renderChat(fs: Files): void {
 
   if (saveBtn) {
     saveBtn.onclick = () => {
+      const url = (document.getElementById("chat-url") as HTMLInputElement)?.value || "";
+      const model = (document.getElementById("chat-model") as HTMLInputElement)?.value || "";
+      const key = (document.getElementById("chat-key") as HTMLInputElement)?.value || "";
+
+      localStorage.setItem("chat-url", url);
+      localStorage.setItem("chat-model", model);
+      localStorage.setItem("chat-key", key);
+
       overlay.style.display = "none";
       main.style.display = "flex";
     };
