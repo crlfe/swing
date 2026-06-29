@@ -80,17 +80,21 @@ export class Files extends EventTarget {
   }
 
   read(path: string): string {
+    if (typeof path !== "string") throw new TypeError("missing path");
     const content = this.files.get(path);
     if (content == null) throw new Error(`File not found: ${path}`);
     return content;
   }
 
   write(path: string, content: string): void {
+    if (typeof path !== "string" || !path) throw new TypeError("missing path");
+    if (typeof content !== "string") throw new TypeError("missing content");
     this.files.set(path, content);
     this.emitChange({ type: "write", path });
   }
 
   delete(path: string): void {
+    if (typeof path !== "string" || !path) throw new TypeError("missing path");
     if (!this.files.get(path)) {
       throw new Error(`File not found: ${path}`);
     }
@@ -99,6 +103,8 @@ export class Files extends EventTarget {
   }
 
   move(oldPath: string, newPath: string): void {
+    if (typeof oldPath !== "string" || !oldPath) throw new TypeError("missing oldPath");
+    if (typeof newPath !== "string" || !newPath) throw new TypeError("missing newPath");
     const fileData = this.files.get(oldPath);
     if (fileData == undefined) {
       throw new Error(`File not found: ${oldPath}`);
