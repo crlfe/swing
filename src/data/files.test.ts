@@ -136,4 +136,56 @@ describe("Files", () => {
       expect(() => files.delete("")).toThrow();
     });
   });
+
+  describe("move", () => {
+    it("should move a file to a new name in the same directory", () => {
+      files.write("file.txt", "content");
+      files.move("file.txt", "new_file.txt");
+      expect(files.read("file.txt")).toBeUndefined();
+      expect(files.read("new_file.txt")).toBe("content");
+    });
+
+    it("should move a file to a different directory", () => {
+      files.write("dir/file.txt", "content");
+      files.move("dir/file.txt", "new_dir/file.txt");
+      expect(files.read("dir/file.txt")).toBeUndefined();
+      expect(files.read("new_dir/file.txt")).toBe("content");
+    });
+
+    it("should move a directory to a new location", () => {
+      files.write("dir/file.txt", "content");
+      files.move("dir", "new_dir");
+      expect(files.getNode("dir")).toBeUndefined();
+      expect(files.read("new_dir/file.txt")).toBe("content");
+    });
+
+    it("should throw ENOENT when the old path does not exist", () => {
+      expect(() => files.move("nonexistent", "new_path")).toThrow("ENOENT");
+    });
+
+    it("should throw EEXIST when the destination is a directory", () => {
+      files.write("foo", "content1");
+      files.write("bar/dir", "content2");
+      expect(() => files.move("foo", "bar")).toThrow("EEXIST");
+    });
+
+    it("should create missing directories when moving a file", () => {
+      files.write("file.txt", "content");
+      files.move("file.txt", "nonexistent_dir/file.txt");
+      expect(files.read("file.txt")).toBeUndefined();
+      expect(files.read("nonexistent_dir/file.txt")).toBe("content");
+    });
+
+    it("should create missing parent when moving a directory into itself", () => {
+      files.write("dir/file.txt", "content");
+      files.move("dir", "dir/subdir");
+      expect(files.read("dir/subdir/file.txt")).toBe("content");
+    });
+
+    it("should create missing parents when moving a directory under itself", () => {
+      files.write("dir/subdir/file.txt", "content");
+      files.move("dir", "dir/subdir/subdir");
+      expect(files.read("dir/subdir/subdir/subdir/file.txt")).toBe("content");
+    });
+  });
 });

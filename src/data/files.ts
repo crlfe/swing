@@ -20,14 +20,7 @@ export class Files {
   }
 
   getNode(path: string): Dir | Blob | undefined {
-    let node: Dir | Blob | undefined = this.#root;
-    for (const name of splitPath(path)) {
-      if (node?.type !== "dir") {
-        return undefined;
-      }
-      node = node.children.get(name);
-    }
-    return node;
+    return walkDown(this.#root, splitPath(path))[1];
   }
 
   read(path: string): string | undefined {
@@ -44,48 +37,30 @@ export class Files {
       throw new Error();
     }
 
-    const trees: Dir[] = [];
+    const [dirs, oldNode] = walkDown(this.#root, parts);
 
-    // Walk down the tree collecting nodes.
-    {
-      let node: Dir | Blob | undefined = this.#root;
-      for (const name of parts) {
-        if (node?.type === "blob") {
-          // Can not replace a blob with a tree.
-          throw Error("ENOTDIR");
-        }
-        if (node?.type === "dir") {
-          trees.push(node);
-          node = node.children.get(name);
-        }
-      }
+    if (oldNode?.type === "dir") {
+      // Can not replace a dir with a blob.
+      throw new Error("EISDIR");
+    }
 
-      if (node?.type === "dir") {
-        // Can not replace a tree with a blob.
-        throw new Error("EISDIR");
-      }
-
-      if (node?.type === "blob" && node.content === content) {
-        // Nothing is changing.
-        return false;
-      }
+    if (oldNode?.type === "blob" && oldNode.content === content) {
+      // Nothing is changing.
+      return false;
     }
 
     // Walk up the tree creating updated nodes.
-    {
-      let node: Dir | Blob = { type: "blob", content };
-      for (let i = parts.length - 1; i >= 0; i--) {
-        const children = new Map(trees[i]?.children);
-        children.set(parts[i], node);
-        node = { type: "dir", children };
-      }
-      if (node?.type !== "dir") {
-        throw new Error("ASSERT");
-      }
-
-      this.#root = node;
+    let node: Dir | Blob = { type: "blob", content };
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const children = new Map(dirs[i]?.children);
+      children.set(parts[i], node);
+      node = { type: "dir", children };
+    }
+    if (node?.type !== "dir") {
+      throw new Error("ASSERT");
     }
 
+    this.#root = node;
     return true;
   }
 
@@ -95,54 +70,82 @@ export class Files {
       throw new Error();
     }
 
-    const trees: Dir[] = [];
+    const [dirs, oldNode] = walkDown(this.#root, parts);
 
-    // Walk down the tree collecting nodes.
-    {
-      let node: Dir | Blob | undefined = this.#root;
-      for (const name of parts) {
-        if (node?.type === "blob") {
-          // Can not replace a blob with a tree.
-          throw Error("ENOTDIR");
-        }
-        if (node?.type === "dir") {
-          trees.push(node);
-          node = node.children.get(name);
-        }
-      }
+    if (oldNode?.type === "dir" && oldNode.children.size) {
+      // Can not delete a non-empty directory.
+      throw Error("ENOTEMPTY");
+    }
 
-      if (node?.type === "dir" && node.children.size) {
-        // Can not delete a non-empty directory.
-        throw new Error("ENOTEMPTY");
-      }
+    if (!oldNode) {
+      // Nothing is changing.
+      return false;
+    }
 
-      if (!node) {
-        // Nothing is changing.
-        return false;
+    // Walk up the tree clearing out the deleted node.
+    let node: Dir | undefined;
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const children = new Map(dirs[i]?.children);
+      if (node) {
+        children.set(parts[i], node);
+      } else {
+        children.delete(parts[i]);
       }
+      node = { type: "dir", children };
+    }
+
+    if (node?.type !== "dir") {
+      throw new Error("ASSERT");
+    }
+
+    this.#root = node;
+    return true;
+  }
+
+  move(oldPath: string, newPath: string): void {
+    const oldParts = splitPath(oldPath);
+
+    const [oldDirs, oldNode] = walkDown(this.#root, oldParts);
+    if (!oldNode) {
+      throw new Error("ENOENT");
+    }
+
+    // Walk up the tree clearing out the deleted node.
+    let node: Dir | undefined;
+    for (let i = oldParts.length - 1; i >= 0; i--) {
+      const children = new Map(oldDirs[i]?.children);
+      if (node) {
+        children.set(oldParts[i], node);
+      } else {
+        children.delete(oldParts[i]);
+      }
+      node = { type: "dir", children };
+    }
+
+    if (node?.type !== "dir") {
+      throw new Error("ASSERT");
+    }
+
+    const newParts = splitPath(newPath);
+    const [newDirs, newNode] = walkDown(node, newParts);
+
+    if (newNode && (newNode.type !== "blob" || oldNode.type !== "blob")) {
+      // Can move a blob on top of another blob, but other combinations fail.
+      throw new Error("EEXIST");
     }
 
     // Walk up the tree creating updated nodes.
-    {
-      let node: Dir | undefined;
-      for (let i = parts.length - 1; i >= 0; i--) {
-        const children = new Map(trees[i]?.children);
-        if (node) {
-          children.set(parts[i], node);
-        } else {
-          children.delete(parts[i]);
-        }
-        node = { type: "dir", children };
-      }
-
-      if (node?.type !== "dir") {
-        throw new Error("ASSERT");
-      }
-
-      this.#root = node;
+    let node2: Dir | Blob = oldNode;
+    for (let i = newParts.length - 1; i >= 0; i--) {
+      const children = new Map(newDirs[i]?.children);
+      children.set(newParts[i], node2);
+      node2 = { type: "dir", children };
+    }
+    if (node2?.type !== "dir") {
+      throw new Error("ASSERT");
     }
 
-    return true;
+    this.#root = node2;
   }
 }
 
@@ -158,4 +161,21 @@ function splitPath(path: string): string[] {
     }
   }
   return dst;
+}
+
+function walkDown(root: Dir, parts: string[]): [Dir[], Dir | Blob | undefined] {
+  const dirs: Dir[] = [];
+
+  let node: Dir | Blob | undefined = root;
+  for (const name of parts) {
+    if (node?.type === "blob") {
+      throw Error("ENOTDIR");
+    }
+    if (node?.type === "dir") {
+      dirs.push(node);
+      node = node.children.get(name);
+    }
+  }
+
+  return [dirs, node];
 }
