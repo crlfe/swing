@@ -42,11 +42,6 @@ describe("Files", () => {
       files.write("a/b/c.txt", "content");
       expect(files.getNode("a/./b/c.txt")).toEqual({ type: "blob", content: "content" });
 
-      // splitPath('a/b/c.txt/..') -> ['a', 'b']
-      // node starts as root.
-      // 'a' -> node is 'a' (dir)
-      // 'b' -> node is 'b' (dir)
-      // result is node 'b'.
       expect(files.getNode("a/b/c.txt/..")).toEqual(files.getNode("a/b"));
     });
   });
@@ -64,6 +59,25 @@ describe("Files", () => {
     it("should throw EISDIR when reading a directory", () => {
       files.write("dir/file.txt", "content");
       expect(() => files.read("dir")).toThrow("EISDIR");
+    });
+
+    it("should throw EISDIR when reading an empty path", () => {
+      expect(() => files.read("")).toThrow("EISDIR");
+    });
+
+    it("should handle dot in path", () => {
+      files.write("a/b.txt", "content");
+      expect(files.read("a/./b.txt")).toBe("content");
+    });
+
+    it("should handle double-dot in path", () => {
+      files.write("a/c.txt", "content");
+      expect(files.read("a/b/../c.txt")).toBe("content");
+    });
+
+    it("should throw EISDIR when reading a directory with trailing slash", () => {
+      files.write("dir/file.txt", "content");
+      expect(() => files.read("dir/")).toThrow("EISDIR");
     });
   });
 
@@ -92,13 +106,24 @@ describe("Files", () => {
       expect(() => files.write("dir", "content")).toThrow("EISDIR");
     });
 
-    it("should throw ENOTDIR when writing a file where a directory exists", () => {
+    it("should throw ENOTDIR when writing a directory where a file exists", () => {
       files.write("file.txt", "content");
       expect(() => files.write("file.txt/sub", "content")).toThrow("ENOTDIR");
     });
 
     it("should throw an error if path is empty", () => {
       expect(() => files.write("", "content")).toThrow();
+    });
+
+    it("should create deeply nested directories on write", () => {
+      const result = files.write("a/b/c/d/e.txt", "nested");
+      expect(result).toBe(true);
+      expect(files.read("a/b/c/d/e.txt")).toBe("nested");
+    });
+
+    it("should handle double-dot in path", () => {
+      files.write("a/../b.txt", "content");
+      expect(files.read("b.txt")).toBe("content");
     });
   });
 
@@ -135,6 +160,21 @@ describe("Files", () => {
     it("should throw an error if path is empty", () => {
       expect(() => files.delete("")).toThrow();
     });
+
+    it("should delete deeply nested empty directories", () => {
+      files.write("a/b/c/d/e.txt", "nested");
+      files.delete("a/b/c/d/e.txt");
+      expect(files.delete("a/b/c/d")).toBe(true);
+      expect(files.delete("a/b/c")).toBe(true);
+      expect(files.delete("a/b")).toBe(true);
+      expect(files.delete("a")).toBe(true);
+    });
+
+    it("should handle double-dot in path", () => {
+      files.write("a/../b.txt", "content");
+      expect(files.delete("a/../b.txt")).toBe(true);
+      expect(files.read("b.txt")).toBeUndefined();
+    });
   });
 
   describe("move", () => {
@@ -163,10 +203,35 @@ describe("Files", () => {
       expect(() => files.move("nonexistent", "new_path")).toThrow("ENOENT");
     });
 
-    it("should throw EEXIST when the destination is a directory", () => {
-      files.write("foo", "content1");
-      files.write("bar/dir", "content2");
+    it("should move a file onto another file", () => {
+      files.write("foo.txt", "content1");
+      files.write("bar.txt", "content2");
+      files.move("foo.txt", "bar.txt");
+      expect(files.read("bar.txt")).toBe("content1");
+    });
+
+    it("should throw EEXIST when moving a directory onto another directory", () => {
+      files.write("foo/file.txt", "content1");
+      files.write("bar/bar-file.txt", "content2");
       expect(() => files.move("foo", "bar")).toThrow("EEXIST");
+    });
+
+    it("should throw EEXIST when moving a directory onto a file", () => {
+      files.write("dir/file.txt", "content1");
+      files.write("target.txt", "content2");
+      expect(() => files.move("dir", "target.txt")).toThrow("EEXIST");
+    });
+
+    it("should move the root", () => {
+      files.write("foo.txt", "content");
+      files.move("", "dir");
+      expect(files.read("dir/foo.txt")).toBe("content");
+    });
+
+    it("should handle dot in new path", () => {
+      files.write("file.txt", "content");
+      files.move("file.txt", "./file.txt");
+      expect(files.read("file.txt")).toBe("content");
     });
 
     it("should create missing directories when moving a file", () => {
@@ -186,6 +251,25 @@ describe("Files", () => {
       files.write("dir/subdir/file.txt", "content");
       files.move("dir", "dir/subdir/subdir");
       expect(files.read("dir/subdir/subdir/subdir/file.txt")).toBe("content");
+    });
+
+    it("should throw EEXIST when moving a file onto a directory", () => {
+      files.write("dir/file.txt", "content");
+      files.write("other.txt", "data");
+      expect(() => files.move("other.txt", "dir")).toThrow("EEXIST");
+    });
+
+    it("should do nothing when oldPath and newPath are identical strings", () => {
+      files.write("file.txt", "content");
+      files.move("file.txt", "file.txt");
+      expect(files.read("file.txt")).toBe("content");
+    });
+
+    it("should handle double-dot in new path", () => {
+      files.write("file.txt", "content");
+      files.write("dir/dummy.txt", "dummy");
+      files.move("file.txt", "dir/../file.txt");
+      expect(files.read("file.txt")).toBe("content");
     });
   });
 });

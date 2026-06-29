@@ -10,7 +10,7 @@
     "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
 
-    "types": ["vite/client"]
+    "types": ["vite/client", "vitest/importMeta"]
   },
   "exclude": ["**/dist", "**/node_modules"]
 }

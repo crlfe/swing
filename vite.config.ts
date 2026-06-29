@@ -1,3 +1,5 @@
+/// <reference types="vitest/config" />
+
 import { defineConfig } from "vite";
 
 import packageJson from "./package.json" with { type: "json" };
@@ -22,5 +24,11 @@ export default defineConfig({
         ),
       },
     },
+  },
+  define: {
+    "import.meta.vitest": "undefined",
+  },
+  test: {
+    includeSource: ["src/**.ts"],
   },
 });

@@ -34,7 +34,7 @@ export class Files {
   write(path: string, content: string): boolean {
     const parts = splitPath(path);
     if (parts.length < 1) {
-      throw new Error();
+      throw new Error("EINVAL");
     }
 
     const [dirs, oldNode] = walkDown(this.#root, parts);
@@ -57,7 +57,7 @@ export class Files {
       node = { type: "dir", children };
     }
     if (node?.type !== "dir") {
-      throw new Error("ASSERT");
+      throw new Error("EASSERT");
     }
 
     this.#root = node;
@@ -67,14 +67,14 @@ export class Files {
   delete(path: string): boolean {
     const parts = splitPath(path);
     if (parts.length < 1) {
-      throw new Error();
+      throw new Error("EINVAL");
     }
 
     const [dirs, oldNode] = walkDown(this.#root, parts);
 
     if (oldNode?.type === "dir" && oldNode.children.size) {
       // Can not delete a non-empty directory.
-      throw Error("ENOTEMPTY");
+      throw new Error("ENOTEMPTY");
     }
 
     if (!oldNode) {
@@ -95,7 +95,7 @@ export class Files {
     }
 
     if (node?.type !== "dir") {
-      throw new Error("ASSERT");
+      throw new Error("EASSERT");
     }
 
     this.#root = node;
@@ -103,6 +103,11 @@ export class Files {
   }
 
   move(oldPath: string, newPath: string): void {
+    if (oldPath === newPath) {
+      // Nothing is changing.
+      return;
+    }
+
     const oldParts = splitPath(oldPath);
 
     const [oldDirs, oldNode] = walkDown(this.#root, oldParts);
@@ -121,9 +126,12 @@ export class Files {
       }
       node = { type: "dir", children };
     }
+    if (!oldParts.length) {
+      node = { type: "dir", children: new Map() };
+    }
 
     if (node?.type !== "dir") {
-      throw new Error("ASSERT");
+      throw new Error("EASSERT");
     }
 
     const newParts = splitPath(newPath);
@@ -142,7 +150,7 @@ export class Files {
       node2 = { type: "dir", children };
     }
     if (node2?.type !== "dir") {
-      throw new Error("ASSERT");
+      throw new Error("EASSERT");
     }
 
     this.#root = node2;
@@ -169,7 +177,7 @@ function walkDown(root: Dir, parts: string[]): [Dir[], Dir | Blob | undefined] {
   let node: Dir | Blob | undefined = root;
   for (const name of parts) {
     if (node?.type === "blob") {
-      throw Error("ENOTDIR");
+      throw new Error("ENOTDIR");
     }
     if (node?.type === "dir") {
       dirs.push(node);
@@ -178,4 +186,77 @@ function walkDown(root: Dir, parts: string[]): [Dir[], Dir | Blob | undefined] {
   }
 
   return [dirs, node];
+}
+
+if (import.meta.vitest) {
+  const { describe, expect, it } = import.meta.vitest;
+
+  describe("splitPath", () => {
+    it("should return an empty array for an empty string", () => {
+      expect(splitPath("")).toEqual([]);
+    });
+
+    it("should strip single dots from path", () => {
+      expect(splitPath("a/./b/./c")).toEqual(["a", "b", "c"]);
+    });
+
+    it("should resolve double-dots correctly", () => {
+      expect(splitPath("a/../b/../c")).toEqual(["c"]);
+    });
+
+    it("should handle deep double-dots that go past root", () => {
+      expect(splitPath("../../../foo")).toEqual(["foo"]);
+    });
+
+    it("should handle a mix of dots and double-dots", () => {
+      expect(splitPath("a/./b/../c")).toEqual(["a", "c"]);
+    });
+
+    it("should handle a path with only double-dots", () => {
+      expect(splitPath("../../")).toEqual([]);
+    });
+
+    it("should ignore trailing slashes", () => {
+      expect(splitPath("a/b/")).toEqual(["a", "b"]);
+    });
+
+    it("should ignore leading slashes", () => {
+      expect(splitPath("/a/b")).toEqual(["a", "b"]);
+    });
+
+    it("should handle multiple slashes", () => {
+      expect(splitPath("a//b///c")).toEqual(["a", "b", "c"]);
+    });
+
+    it("should return empty array for root slash", () => {
+      expect(splitPath("/")).toEqual([]);
+    });
+  });
+
+  describe("walkDown", () => {
+    it("should return root and undefined when no parts", () => {
+      const root: Dir = { type: "dir", children: new Map() };
+      const [dirs, node] = walkDown(root, []);
+      expect(dirs).toEqual([root]);
+      expect(node).toBeUndefined();
+    });
+
+    it("should throw ENOTDIR when a blob is in the path", () => {
+      const root: Dir = {
+        type: "dir",
+        children: new Map([["file.txt", { type: "blob", content: "x" }]]),
+      };
+      expect(() => walkDown(root, ["file.txt", "sub"])).toThrow("ENOTDIR");
+    });
+
+    it("should return undefined node when path ends at a directory", () => {
+      const root: Dir = {
+        type: "dir",
+        children: new Map([["dir", { type: "dir", children: new Map() }]]),
+      };
+      const [dirs, node] = walkDown(root, ["dir"]);
+      expect(dirs).toEqual([root]);
+      expect(node).toBeUndefined();
+    });
+  });
 }
