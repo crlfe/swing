@@ -1,14 +1,6 @@
-export interface Dir {
-  readonly type: "dir";
-  readonly children: Map<string, Dir | Blob>;
-}
+import type { Blob, Dir } from "./types.ts";
 
-export interface Blob {
-  readonly type: "blob";
-  readonly content: string;
-}
-
-export class Files {
+export class FileTree {
   #root: Dir;
 
   constructor(root?: Dir) {
@@ -23,7 +15,7 @@ export class Files {
     return walkDown(this.#root, splitPath(path))[1];
   }
 
-  read(path: string): string | undefined {
+  read(path: string): ReadonlyArray<string> | undefined {
     const node = this.getNode(path);
     if (node?.type === "dir") {
       throw new Error("EISDIR");
@@ -31,7 +23,7 @@ export class Files {
     return node?.content;
   }
 
-  write(path: string, content: string): boolean {
+  write(path: string, content: ReadonlyArray<string>): boolean {
     const parts = splitPath(path);
     if (parts.length < 1) {
       throw new Error("EINVAL");
@@ -44,9 +36,14 @@ export class Files {
       throw new Error("EISDIR");
     }
 
-    if (oldNode?.type === "blob" && oldNode.content === content) {
-      // Nothing is changing.
-      return false;
+    if (oldNode?.type === "blob") {
+      if (
+        oldNode.content.length === content.length &&
+        oldNode.content.every((line, idx) => line === content[idx])
+      ) {
+        // Nothing is changing.
+        return false;
+      }
     }
 
     // Walk up the tree creating updated nodes.
@@ -244,7 +241,7 @@ if (import.meta.vitest) {
     it("should throw ENOTDIR when a blob is in the path", () => {
       const root: Dir = {
         type: "dir",
-        children: new Map([["file.txt", { type: "blob", content: "x" }]]),
+        children: new Map([["file.txt", { type: "blob", content: ["x"] }]]),
       };
       expect(() => walkDown(root, ["file.txt", "sub"])).toThrow("ENOTDIR");
     });
