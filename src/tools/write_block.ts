@@ -1,4 +1,4 @@
-import { type Tool } from "../types.ts";
+import { type Tool } from "../chat/types.ts";
 import { findBlock } from "./read_block.ts";
 
 interface WriteBlockArgs {

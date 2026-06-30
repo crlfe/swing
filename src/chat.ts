@@ -1,4 +1,6 @@
-import { type Files } from "./fs.ts";
+import type { ChatContext } from "./chat/context.ts";
+import type { Message, Tool, ToolCall } from "./chat/types.ts";
+import type { Files } from "./fs.ts";
 import deleteFileTool from "./tools/delete_file.ts";
 import listTreeTool from "./tools/list_tree.ts";
 import moveFileTool from "./tools/move_file.ts";
@@ -6,22 +8,16 @@ import readBlockTool from "./tools/read_block.ts";
 import readFileTool from "./tools/read_file.ts";
 import readToplevelTool from "./tools/read_toplevel.ts";
 import writeFileTool from "./tools/write_file.ts";
-import type { Tool, ToolCall } from "./types.ts";
 
-interface ChatConfig {
+export interface ChatConfig {
   url: string;
   model: string;
   key: string;
   stream?: boolean;
   fs: Files;
-  logInfo: (msg: string) => void;
-}
 
-export interface Message {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-  tool_calls?: ToolCall[];
-  tool_call_id?: string;
+  logText(msg: string): void;
+  logInfo(msg: string): void;
 }
 
 const toolRegistry: Record<string, Tool> = {
@@ -44,7 +40,7 @@ async function executeTools(toolCalls: ToolCall[], config: ChatConfig): Promise<
       throw new Error(`Unknown tool: ${toolCall.function.name}`);
     }
     const args = JSON.parse(toolCall.function.arguments);
-    const result = await tool.execute(args, { logInfo: config.logInfo, fs: config.fs });
+    const result = await tool.execute(args, config);
     toolResults.push({
       role: "tool",
       tool_call_id: toolCall.id,
@@ -54,11 +50,11 @@ async function executeTools(toolCalls: ToolCall[], config: ChatConfig): Promise<
   return toolResults;
 }
 
-export async function* sendMessageStream(messages: Message[], config: ChatConfig) {
+export async function sendMessageStream(context: ChatContext, config: ChatConfig) {
   const streamEnabled = config.stream !== false;
-  let currentMessages = [...messages];
 
   while (true) {
+    const currentMessages = context.getMessages();
     const requestBody = {
       model: config.model,
       messages: currentMessages,
@@ -97,10 +93,14 @@ export async function* sendMessageStream(messages: Message[], config: ChatConfig
 
       if (message.tool_calls && message.tool_calls.length > 0) {
         const toolResults = await executeTools(message.tool_calls, config);
-        currentMessages = [...currentMessages, message, ...toolResults];
+        context.addMessage(message);
+        for (const res of toolResults) {
+          context.addMessage(res);
+        }
         // Continue to next iteration of the while loop
       } else {
-        yield message.content;
+        context.addMessage(message);
+        if (message.content) config.logText(message.content);
         break;
       }
     } else {
@@ -132,7 +132,7 @@ export async function* sendMessageStream(messages: Message[], config: ChatConfig
 
               if (delta.content) {
                 accumulatedMessage.content += delta.content;
-                yield delta.content;
+                if (delta.content) config.logText(delta.content);
               }
 
               if (delta.tool_calls) {
@@ -162,12 +162,15 @@ export async function* sendMessageStream(messages: Message[], config: ChatConfig
       }
 
       if (!accumulatedMessage.tool_calls?.length) {
-        // Nothing more to do.
+        context.addMessage(accumulatedMessage);
         break;
       }
 
       const toolResults = await executeTools(accumulatedMessage.tool_calls, config);
-      currentMessages = [...currentMessages, accumulatedMessage, ...toolResults];
+      context.addMessage(accumulatedMessage);
+      for (const res of toolResults) {
+        context.addMessage(res);
+      }
     }
   }
 }

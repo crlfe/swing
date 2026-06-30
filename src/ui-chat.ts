@@ -1,19 +1,8 @@
 import { sendMessageStream, getSystemPrompt } from "./chat.ts";
+import { type ChatConfig } from "./chat.ts";
+import { ChatContext } from "./chat/context.ts";
 import { type Files } from "./fs.ts";
 import { h } from "./h.ts";
-
-interface ChatConfig {
-  url: string;
-  model: string;
-  key: string;
-  stream: boolean;
-  fs: Files;
-}
-
-interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
 
 export function renderChat(fs: Files): void {
   const container = document.getElementById("chat-panel");
@@ -86,12 +75,22 @@ export function renderChat(fs: Files): void {
   const sendBtn = document.getElementById("chat-send-btn") as HTMLButtonElement | null;
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
 
-  let chatHistory: ChatMessage[] = [{ role: "system", content: getSystemPrompt() }];
+  const context = new ChatContext();
+  context.addMessage({ role: "system", content: getSystemPrompt() });
 
   if (sendBtn && input) {
     sendBtn.onclick = async () => {
       const text = input.value.trim();
       if (!text) return;
+
+      function log(msg: string) {
+        fullResponse += msg;
+        updateMessageContent(aiMsgDiv, "AI", fullResponse);
+        const messagesContainer = document.getElementById("chat-messages");
+        if (messagesContainer) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      }
 
       const config: ChatConfig = {
         url: (document.getElementById("chat-url") as HTMLInputElement)?.value || "",
@@ -99,26 +98,23 @@ export function renderChat(fs: Files): void {
         key: (document.getElementById("chat-key") as HTMLInputElement)?.value || "unspecified",
         stream: true,
         fs,
+        logInfo(msg: string) {
+          log(msg + "\n");
+        },
+        logText(msg: string) {
+          log(msg);
+        },
       };
 
       appendMessage("User", text);
       input.value = "";
-      chatHistory.push({ role: "user", content: text });
+      context.addMessage({ role: "user", content: text });
 
       const aiMsgDiv = appendMessage("AI", "");
       let fullResponse = "";
 
       try {
-        const stream = sendMessageStream(chatHistory, config);
-        for await (const chunk of stream) {
-          fullResponse += chunk;
-          updateMessageContent(aiMsgDiv, "AI", fullResponse);
-          const messagesContainer = document.getElementById("chat-messages");
-          if (messagesContainer) {
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
-          }
-        }
-        chatHistory.push({ role: "assistant", content: fullResponse });
+        await sendMessageStream(context, config);
       } catch (e) {
         updateMessageContent(
           aiMsgDiv,

@@ -1,6 +1,6 @@
+import { type Tool } from "../chat/types.ts";
 import { debouncedRefreshPreview } from "../preview.ts";
 import { state } from "../state.ts";
-import { type Tool } from "../types.ts";
 
 interface WriteFileArgs {
   path: string;

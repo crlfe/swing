@@ -5,7 +5,8 @@ import * as nodePath from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { sendMessageStream, type Message } from "../chat.ts";
+import { sendMessageStream, type ChatConfig } from "../chat.ts";
+import { ChatContext } from "../chat/context.ts";
 import { Files } from "../fs.ts";
 
 async function loadFiles(base: string): Promise<Files> {
@@ -41,8 +42,6 @@ async function loadFiles(base: string): Promise<Files> {
 
 async function saveFiles(root: string, files: Files): Promise<number> {
   let changed = 0;
-
-  // Ensure this has a trailing slash so it can be used as a prefix.
   const rootHref = pathToFileURL(root).href.replace(/\/?$/, "/");
 
   for (const [entryRel, content] of Object.entries(files.toJSON())) {
@@ -85,15 +84,18 @@ async function run() {
     process.exit(1);
   }
 
-  const config = {
+  const config: ChatConfig = {
     url: chatUrl.replace(/\/?$/, "/chat/completions"),
     model: chatModel,
     key: chatKey,
     stream: true,
     fs: new Files(),
 
+    logText(msg: string) {
+      process.stdout.write(msg);
+    },
     logInfo(msg: string) {
-      console.log(msg);
+      process.stderr.write(msg + "\n");
     },
   };
 
@@ -104,7 +106,8 @@ async function run() {
   }
 
   const systemPrompt = "You are a helpful AI assistant. Be concise and professional.";
-  let messages: Message[] = [{ role: "system", content: systemPrompt }];
+  const context = new ChatContext();
+  context.addMessage({ role: "system", content: systemPrompt });
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -157,19 +160,10 @@ async function run() {
       continue;
     }
 
-    messages.push({ role: "user", content: userInput });
+    context.addMessage({ role: "user", content: userInput });
 
     try {
-      let fullResponse = "";
-      const stream = sendMessageStream(messages, config);
-      for await (const chunk of stream) {
-        process.stdout.write(chunk);
-        fullResponse += chunk;
-      }
-      messages.push({
-        role: "assistant",
-        content: fullResponse,
-      });
+      await sendMessageStream(context, config);
     } catch (e) {
       console.error("\nChat error:", e);
     }

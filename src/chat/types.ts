@@ -1,4 +1,12 @@
-import { type Files } from "./fs.ts";
+import { type ChatConfig } from "../chat.ts";
+import { type Files } from "../fs.ts";
+
+export interface Message {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+}
 
 export interface ToolFunctionDefinition {
   name: string;
@@ -16,11 +24,9 @@ export interface ToolOptions {
   fs: Files;
 }
 
-export type ToolExecutor = (args: any, options: ToolOptions) => Promise<string>;
-
 export interface Tool {
   definition: ToolDefinition;
-  execute: ToolExecutor;
+  execute(args: any, options: ChatConfig): Promise<string>;
 }
 
 export interface ToolCall {
