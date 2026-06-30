@@ -57,7 +57,7 @@ describe("Virtual File System", () => {
   });
 
   it("should list directory tree correctly", () => {
-    const names = fs.list();
+    const names = fs.listWithDirectoriesFirst();
     expect(names).toContain("index.html");
     expect(names).toContain("src/");
     expect(names).toContain("src/main.js");

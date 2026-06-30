@@ -2,11 +2,8 @@ import type { ChatContext } from "./chat/context.ts";
 import type { Message, Tool, ToolCall } from "./chat/types.ts";
 import type { Files } from "./fs.ts";
 import deleteFileTool from "./tools/delete_file.ts";
-import listTreeTool from "./tools/list_tree.ts";
 import moveFileTool from "./tools/move_file.ts";
-import readBlockTool from "./tools/read_block.ts";
 import readFileTool from "./tools/read_file.ts";
-import readToplevelTool from "./tools/read_toplevel.ts";
 import writeFileTool from "./tools/write_file.ts";
 
 export interface ChatConfig {
@@ -25,9 +22,6 @@ const toolRegistry: Record<string, Tool> = {
   [writeFileTool.definition.function.name]: writeFileTool,
   [deleteFileTool.definition.function.name]: deleteFileTool,
   [moveFileTool.definition.function.name]: moveFileTool,
-  [listTreeTool.definition.function.name]: listTreeTool,
-  [readToplevelTool.definition.function.name]: readToplevelTool,
-  [readBlockTool.definition.function.name]: readBlockTool,
 };
 
 const tools = Object.values(toolRegistry).map((t) => t.definition);

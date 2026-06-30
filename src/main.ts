@@ -163,7 +163,7 @@ function initPreviewToggle(): void {
 initSidebar();
 initPreviewToggle();
 renderChat(fs);
-const initialFiles = fs.list().filter((path) => !path.endsWith("/"));
+const initialFiles = fs.listWithDirectoriesFirst().filter((path) => !path.endsWith("/"));
 if (initialFiles.length > 0) {
   handleFileOpen(initialFiles[0]);
 } else {

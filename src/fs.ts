@@ -65,7 +65,7 @@ export class Files extends EventTarget {
     return root;
   }
 
-  list(): string[] {
+  listWithDirectoriesFirst(): string[] {
     const root = this.getTree();
     const result: string[] = [];
     const flatten = (node: FileTreeNode) => {
