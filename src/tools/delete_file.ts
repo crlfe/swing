@@ -21,14 +21,17 @@ const deleteFileTool: Tool = {
   },
   execute: async (args, { logInfo, fs }) => {
     const { path } = args as DeleteFileArgs;
+    if (typeof path !== "string") {
+      throw new Error("Argument 'path' must be a string");
+    }
     if (logInfo) {
       logInfo(`Deleting file: ${path}`);
     }
     try {
       fs.delete(path);
-      return `Successfully deleted ${path}`;
+      return `OK deleted ${path}`;
     } catch (e: any) {
-      return `Error deleting file ${path}: ${e.message}`;
+      return `ERR ${e.message}`;
     }
   },
 };

@@ -23,14 +23,17 @@ const moveFileTool: Tool = {
   },
   execute: async (args, { logInfo, fs }) => {
     const { oldPath, newPath } = args as MoveFileArgs;
+    if (typeof oldPath !== "string" || typeof newPath !== "string") {
+      throw new Error("Arguments 'oldPath' and 'newPath' must be strings");
+    }
     if (logInfo) {
       logInfo(`Moving file from ${oldPath} to ${newPath}`);
     }
     try {
       fs.move(oldPath, newPath);
-      return `Successfully moved ${oldPath} to ${newPath}`;
+      return `OK moved ${oldPath} to ${newPath}`;
     } catch (e: any) {
-      return `Error moving file from ${oldPath} to ${newPath}: ${e.message}`;
+      return `ERR ${e.message}`;
     }
   },
 };

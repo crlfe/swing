@@ -65,6 +65,10 @@ export class Files extends EventTarget {
     return root;
   }
 
+  list(): string[] {
+    return Array.from(this.files.keys());
+  }
+
   listWithDirectoriesFirst(): string[] {
     const root = this.getTree();
     const result: string[] = [];

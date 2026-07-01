@@ -25,8 +25,11 @@ const writeFileTool: Tool = {
   },
   execute: async (args, { fs, logInfo }) => {
     const { path, content } = args as WriteFileArgs;
+    if (typeof path !== "string" || typeof content !== "string") {
+      throw new Error("Arguments 'path' and 'content' must be strings");
+    }
     if (logInfo) {
-      logInfo(`Writing to file: ${path}`);
+      logInfo(`Writing file: ${path}`);
     }
     try {
       fs.write(path, content);
@@ -38,9 +41,9 @@ const writeFileTool: Tool = {
         debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
       }
 
-      return `Successfully wrote to ${path}`;
+      return `OK wrote ${path}`;
     } catch (e: any) {
-      return `Error writing to file ${path}: ${e.message}`;
+      return `ERR ${e.message}`;
     }
   },
 };
