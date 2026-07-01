@@ -49,7 +49,7 @@ export class FileTree {
     const parts = splitPath(path);
     const node = walkDown(this.#root, parts)[1];
     if (!node) {
-      throw new Error("ENOENT");
+      throw new Error("Path not found");
     }
     recurse(parts, node);
 
@@ -68,22 +68,18 @@ export class FileTree {
   read(path: string): ReadonlyArray<string> | undefined {
     const node = this.getNode(path);
     if (node?.type === "dir") {
-      throw new Error("EISDIR");
+      throw new Error("Can not read a directory");
     }
     return node?.content;
   }
 
   write(path: string, content: ReadonlyArray<string>): boolean {
     const parts = splitPath(path);
-    if (parts.length < 1) {
-      throw new Error("EINVAL");
-    }
-
     const [newRoot, oldNode] = attachNode(this.#root, parts, { type: "blob", content });
 
     if (oldNode?.type === "dir") {
       // Can not replace a dir with a blob.
-      throw new Error("EISDIR");
+      throw new Error("Can not write a directory");
     }
 
     if (oldNode?.type === "blob") {
@@ -101,17 +97,12 @@ export class FileTree {
     return true;
   }
 
-  delete(path: string): boolean {
+  delete(path: string, options?: { recursive?: boolean }): boolean {
     const parts = splitPath(path);
-    if (parts.length < 1) {
-      throw new Error("EINVAL");
-    }
-
     const [newRoot, oldNode] = detachNode(this.#root, parts);
 
-    if (oldNode?.type === "dir" && oldNode.children.size) {
-      // Can not delete a non-empty directory.
-      throw new Error("ENOTEMPTY");
+    if (oldNode?.type === "dir" && oldNode.children.size && !options?.recursive) {
+      throw new Error("Directory not empty");
     }
 
     if (!oldNode) {
@@ -133,7 +124,7 @@ export class FileTree {
     const oldParts = splitPath(oldPath);
     const [movingRoot, movingNode] = detachNode(this.#root, oldParts);
     if (!movingNode) {
-      throw new Error("ENOENT");
+      throw new Error("Path not found");
     }
 
     const newParts = splitPath(newPath);
@@ -141,7 +132,7 @@ export class FileTree {
 
     if (replacedNode && (replacedNode.type !== "blob" || movingNode.type !== "blob")) {
       // Can move a blob on top of another blob, but other combinations fail.
-      throw new Error("EEXIST");
+      throw new Error("Destination path already exists");
     }
 
     this.#root = newRoot;

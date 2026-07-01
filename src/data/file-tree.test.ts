@@ -57,13 +57,13 @@ describe("FileTree", () => {
       expect(tree.read("missing.txt")).toBeUndefined();
     });
 
-    it("should throw EISDIR when reading a directory", () => {
+    it("should throw when reading a directory", () => {
       tree.write("dir/file.txt", ["content"]);
-      expect(() => tree.read("dir")).toThrow("EISDIR");
+      expect(() => tree.read("dir")).toThrow("Can not read a directory");
     });
 
-    it("should throw EISDIR when reading an empty path", () => {
-      expect(() => tree.read("")).toThrow("EISDIR");
+    it("should throw when reading an empty path", () => {
+      expect(() => tree.read("")).toThrow("Can not read a directory");
     });
 
     it("should handle dot in path", () => {
@@ -76,9 +76,9 @@ describe("FileTree", () => {
       expect(tree.read("a/b/../c.txt")).toEqual(["content"]);
     });
 
-    it("should throw EISDIR when reading a directory with trailing slash", () => {
+    it("should throw when reading a directory with trailing slash", () => {
       tree.write("dir/file.txt", ["content"]);
-      expect(() => tree.read("dir/")).toThrow("EISDIR");
+      expect(() => tree.read("dir/")).toThrow("Can not read a directory");
     });
   });
 
@@ -102,17 +102,19 @@ describe("FileTree", () => {
       expect(result).toBe(false);
     });
 
-    it("should throw EISDIR when writing a directory", () => {
+    it("should throw when writing a directory", () => {
       tree.write("dir/file.txt", ["content"]);
-      expect(() => tree.write("dir", ["content"])).toThrow("EISDIR");
+      expect(() => tree.write("dir", ["content"])).toThrow("Can not write a directory");
     });
 
-    it("should throw ENOTDIR when writing a directory where a file exists", () => {
+    it("should throw when writing a directory where a file exists", () => {
       tree.write("file.txt", ["content"]);
-      expect(() => tree.write("file.txt/sub", ["content"])).toThrow("ENOTDIR");
+      expect(() => tree.write("file.txt/sub", ["content"])).toThrow(
+        "Path component is not a directory",
+      );
     });
 
-    it("should throw an error if path is empty", () => {
+    it("should throw when path is empty", () => {
       expect(() => tree.write("", ["content"])).toThrow();
     });
 
@@ -148,18 +150,38 @@ describe("FileTree", () => {
       expect(tree.getNode("dir")).toBeUndefined();
     });
 
-    it("should throw ENOTEMPTY when deleting a non-empty directory", () => {
+    it("should throw when deleting a non-empty directory", () => {
       tree.write("dir/file.txt", ["content"]);
-      expect(() => tree.delete("dir")).toThrow("ENOTEMPTY");
+      expect(() => tree.delete("dir")).toThrow("Directory not empty");
     });
 
-    it("should throw ENOTDIR when deleting a directory where a file exists", () => {
+    it("should throw when deleting a directory where a file exists", () => {
       tree.write("file.txt", ["content"]);
-      expect(() => tree.delete("file.txt/sub")).toThrow("ENOTDIR");
+      expect(() => tree.delete("file.txt/sub")).toThrow("Path component is not a directory");
     });
 
-    it("should throw an error if path is empty", () => {
-      expect(() => tree.delete("")).toThrow();
+    it("should return true when deleting an empty path (root is empty)", () => {
+      expect(tree.delete("")).toBe(true);
+    });
+
+    it("should throw when deleting an empty path and root is not empty", () => {
+      tree.write("file.txt", ["content"]);
+      expect(() => tree.delete("")).toThrow("Directory not empty");
+    });
+
+    it("should delete a non-empty directory when recursive is true", () => {
+      tree.write("dir/file1.txt", ["1"]);
+      tree.write("dir/file2.txt", ["2"]);
+      const result = tree.delete("dir", { recursive: true });
+      expect(result).toBe(true);
+      expect(tree.getNode("dir")).toBeUndefined();
+    });
+
+    it("should delete a deeply nested directory recursively", () => {
+      tree.write("a/b/c/file.txt", ["content"]);
+      const result = tree.delete("a", { recursive: true });
+      expect(result).toBe(true);
+      expect(tree.getNode("a")).toBeUndefined();
     });
 
     it("should delete deeply nested empty directories", () => {
@@ -200,8 +222,8 @@ describe("FileTree", () => {
       expect(tree.read("new_dir/file.txt")).toEqual(["content"]);
     });
 
-    it("should throw ENOENT when the old path does not exist", () => {
-      expect(() => tree.move("nonexistent", "new_path")).toThrow("ENOENT");
+    it("should throw when the old path does not exist", () => {
+      expect(() => tree.move("nonexistent", "new_path")).toThrow("Path not found");
     });
 
     it("should move a file onto another file", () => {
@@ -211,16 +233,16 @@ describe("FileTree", () => {
       expect(tree.read("bar.txt")).toEqual(["content1"]);
     });
 
-    it("should throw EEXIST when moving a directory onto another directory", () => {
+    it("should throw when moving a directory onto another directory", () => {
       tree.write("foo/file.txt", ["content1"]);
       tree.write("bar/bar-file.txt", ["content2"]);
-      expect(() => tree.move("foo", "bar")).toThrow("EEXIST");
+      expect(() => tree.move("foo", "bar")).toThrow("Destination path already exists");
     });
 
-    it("should throw EEXIST when moving a directory onto a file", () => {
+    it("should throw when moving a directory onto a file", () => {
       tree.write("dir/file.txt", ["content1"]);
       tree.write("target.txt", ["content2"]);
-      expect(() => tree.move("dir", "target.txt")).toThrow("EEXIST");
+      expect(() => tree.move("dir", "target.txt")).toThrow("Destination path already exists");
     });
 
     it("should move the root", () => {
@@ -254,10 +276,10 @@ describe("FileTree", () => {
       expect(tree.read("dir/subdir/subdir/subdir/file.txt")).toEqual(["content"]);
     });
 
-    it("should throw EEXIST when moving a file onto a directory", () => {
+    it("should throw when moving a file onto a directory", () => {
       tree.write("dir/file.txt", ["content"]);
       tree.write("other.txt", ["data"]);
-      expect(() => tree.move("other.txt", "dir")).toThrow("EEXIST");
+      expect(() => tree.move("other.txt", "dir")).toThrow("Destination path already exists");
     });
 
     it("should do nothing when oldPath and newPath are identical strings", () => {
@@ -345,8 +367,8 @@ describe("FileTree", () => {
   });
 
   describe("walk", () => {
-    it("should throw ENOENT for non-existent path", () => {
-      expect(() => tree.walk("nonexistent", () => {})).toThrow("ENOENT");
+    it("should throw for non-existent path", () => {
+      expect(() => tree.walk("nonexistent", () => {})).toThrow("Path not found");
     });
 
     it("should walk a single file", () => {

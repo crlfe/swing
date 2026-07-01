@@ -117,7 +117,7 @@ describe("diffLines", () => {
     expect(result[1]?.newLines).toEqual(["and sleeps"]);
   });
 
-  it("should throw an error for extremely large files", () => {
+  it("should throw when files are too large", () => {
     const smallLines = Array.from({ length: 1000 }, () => String(Math.random()));
     const largeLines = Array.from({ length: 5001 }, () => String(Math.random()));
     expect(() => diffLinesMyers(smallLines, largeLines)).toThrow(/Too many lines to diff/);

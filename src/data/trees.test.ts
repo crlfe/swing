@@ -53,12 +53,12 @@ describe("walkDown", () => {
     expect(node).toBe(root);
   });
 
-  it("should throw ENOTDIR when a blob is in the path", () => {
+  it("should throw when a blob is in the path", () => {
     const root: TreeDir = {
       type: "dir",
       children: new Map([["file.txt", { type: "blob", content: ["x"] }]]),
     };
-    expect(() => walkDown(root, ["file.txt", "sub"])).toThrow("ENOTDIR");
+    expect(() => walkDown(root, ["file.txt", "sub"])).toThrow("Path component is not a directory");
   });
 
   it("should return the node when path ends at a directory", () => {
@@ -186,13 +186,15 @@ describe("attachNode", () => {
     expect(newRoot).not.toBe(root);
   });
 
-  it("should throw ENOTDIR if path contains a blob", () => {
+  it("should throw if path contains a blob", () => {
     const root: TreeDir = {
       type: "dir",
       children: new Map([["file.txt", { type: "blob", content: ["x"] }]]),
     };
     const newNode: TreeBlob = { type: "blob", content: ["y"] };
-    expect(() => attachNode(root, ["file.txt", "sub"], newNode)).toThrow("ENOTDIR");
+    expect(() => attachNode(root, ["file.txt", "sub"], newNode)).toThrow(
+      "Path component is not a directory",
+    );
   });
 });
 

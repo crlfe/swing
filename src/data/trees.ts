@@ -21,7 +21,7 @@ export function walkDown(root: TreeDir, parts: string[]): [TreeDir[], TreeNode |
   let node: TreeNode | undefined = root;
   for (const name of parts) {
     if (node?.type === "blob") {
-      throw new Error("ENOTDIR");
+      throw new Error("Path component is not a directory");
     }
     if (node?.type === "dir") {
       dirs.push(node);
