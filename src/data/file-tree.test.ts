@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vitest } from "vitest";
 
 import { FileTree } from "./file-tree.ts";
-import type { Dir } from "./types.ts";
+import type { TreeDir } from "./types.ts";
 
 describe("FileTree", () => {
   let tree: FileTree;
@@ -18,7 +18,7 @@ describe("FileTree", () => {
     });
 
     it("should initialize with a custom root directory", () => {
-      const customRoot: Dir = {
+      const customRoot: TreeDir = {
         type: "dir",
         children: new Map([["file.txt", { type: "blob", content: ["hello"] }]]),
       };

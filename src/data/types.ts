@@ -1,12 +1,14 @@
-export interface Dir {
+export interface TreeDir {
   readonly type: "dir";
-  readonly children: Map<string, Dir | Blob>;
+  readonly children: Map<string, TreeNode>;
 }
 
-export interface Blob {
+export interface TreeBlob {
   readonly type: "blob";
   readonly content: ReadonlyArray<string>;
 }
+
+export type TreeNode = TreeDir | TreeBlob;
 
 export interface Patch {
   readonly files: PatchFile[];
