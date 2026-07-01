@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vitest } from "vitest";
 
 import { FileTree } from "./file-tree.ts";
 import type { Dir } from "./types.ts";
@@ -271,6 +271,76 @@ describe("FileTree", () => {
       tree.write("dir/dummy.txt", ["dummy"]);
       tree.move("file.txt", "dir/../file.txt");
       expect(tree.read("file.txt")).toEqual(["content"]);
+    });
+  });
+
+  describe("watch", () => {
+    it("should notify when a file is written", () => {
+      const callback = vitest.fn();
+      tree.watch("test.txt", callback);
+      tree.write("test.txt", ["content"]);
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    it("should notify when a file is deleted", () => {
+      const callback = vitest.fn();
+      tree.write("test.txt", ["content"]);
+      tree.watch("test.txt", callback);
+      tree.delete("test.txt");
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    it("should notify when a file is moved (both old and new paths)", () => {
+      const oldCallback = vitest.fn();
+      const newCallback = vitest.fn();
+      tree.write("old.txt", ["content"]);
+      tree.watch("old.txt", oldCallback);
+      tree.watch("new.txt", newCallback);
+      tree.move("old.txt", "new.txt");
+      expect(oldCallback).toHaveBeenCalledTimes(1);
+      expect(newCallback).toHaveBeenCalledTimes(1);
+    });
+
+    it("should support recursive watching", () => {
+      const callback = vitest.fn();
+      tree.watch("dir", callback, { recursive: true });
+
+      tree.write("dir/file1.txt", ["content1"]);
+      tree.write("dir/file2.txt", ["content2"]);
+      tree.write("dir/subdir/file3.txt", ["content3"]);
+
+      expect(callback).toHaveBeenCalledTimes(3);
+    });
+
+    it("should not notify recursively if recursive is false", () => {
+      const callback = vitest.fn();
+      tree.watch("dir", callback, { recursive: false });
+
+      tree.write("dir/file.txt", ["content"]);
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("should stop notifying after unsubscribe", () => {
+      const callback = vitest.fn();
+      const unsubscribe = tree.watch("test.txt", callback);
+
+      tree.write("test.txt", ["content1"]);
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      unsubscribe();
+      tree.write("test.txt", ["content2"]);
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    it("should handle multiple watchers on the same path", () => {
+      const cb1 = vitest.fn();
+      const cb2 = vitest.fn();
+      tree.watch("test.txt", cb1);
+      tree.watch("test.txt", cb2);
+
+      tree.write("test.txt", ["content"]);
+      expect(cb1).toHaveBeenCalledTimes(1);
+      expect(cb2).toHaveBeenCalledTimes(1);
     });
   });
 });

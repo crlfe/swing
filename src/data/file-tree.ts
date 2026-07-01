@@ -1,7 +1,15 @@
 import type { Blob, Dir } from "./types.ts";
 
+export type FileTreeListener = (path: string) => void;
+
+interface FileTreeWatch {
+  callback: FileTreeListener;
+  recursive: boolean;
+}
+
 export class FileTree {
   #root: Dir;
+  #watchers: Map<string, Set<FileTreeWatch>> = new Map();
 
   constructor(root?: Dir) {
     this.#root = root ?? { type: "dir", children: new Map() };
@@ -13,6 +21,27 @@ export class FileTree {
 
   getNode(path: string): Dir | Blob | undefined {
     return walkDown(this.#root, splitPath(path))[1];
+  }
+
+  watch(
+    path: string,
+    callback: FileTreeListener,
+    options: { recursive?: boolean } = {},
+  ): () => void {
+    let watchers = this.#watchers.get(path);
+    if (!watchers) {
+      watchers = new Set();
+      this.#watchers.set(path, watchers);
+    }
+    const watcher = { callback, recursive: options.recursive ?? false };
+    watchers.add(watcher);
+
+    return () => {
+      watchers.delete(watcher);
+      if (watchers.size === 0) {
+        this.#watchers.delete(path);
+      }
+    };
   }
 
   read(path: string): ReadonlyArray<string> | undefined {
@@ -58,6 +87,7 @@ export class FileTree {
     }
 
     this.#root = node;
+    this.#notifyWatchers(path);
     return true;
   }
 
@@ -96,6 +126,7 @@ export class FileTree {
     }
 
     this.#root = node;
+    this.#notifyWatchers(path);
     return true;
   }
 
@@ -151,6 +182,29 @@ export class FileTree {
     }
 
     this.#root = node2;
+    this.#notifyWatchers(oldPath);
+    this.#notifyWatchers(newPath);
+  }
+
+  #notifyWatchers(path: string) {
+    const parts = splitPath(path);
+    for (const [watchPath, callbacks] of this.#watchers) {
+      const watchParts = splitPath(watchPath);
+      for (const { callback, recursive } of callbacks) {
+        if (recursive) {
+          if (
+            parts.length >= watchParts.length &&
+            parts.slice(0, watchParts.length).every((p, i) => p === watchParts[i])
+          ) {
+            callback(path);
+          }
+        } else {
+          if (parts.length === watchParts.length && parts.every((p, i) => p === watchParts[i])) {
+            callback(path);
+          }
+        }
+      }
+    }
   }
 }
 
