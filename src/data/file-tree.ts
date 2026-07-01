@@ -1,3 +1,4 @@
+import { arrayGet } from "../util.ts";
 import type { Blob, Dir } from "./types.ts";
 
 export type FileTreeListener = (path: string) => void;
@@ -58,7 +59,7 @@ export class FileTree {
       throw new Error("EINVAL");
     }
 
-    const [dirs, oldNode] = walkDown(this.#root, parts);
+    const [newRoot, oldNode] = attachNode(this.#root, parts, { type: "blob", content });
 
     if (oldNode?.type === "dir") {
       // Can not replace a dir with a blob.
@@ -75,18 +76,7 @@ export class FileTree {
       }
     }
 
-    // Walk up the tree creating updated nodes.
-    let node: Dir | Blob = { type: "blob", content };
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const children = new Map(dirs[i]?.children);
-      children.set(parts[i], node);
-      node = { type: "dir", children };
-    }
-    if (node?.type !== "dir") {
-      throw new Error("EASSERT");
-    }
-
-    this.#root = node;
+    this.#root = newRoot;
     this.#notifyWatchers(path);
     return true;
   }
@@ -97,7 +87,7 @@ export class FileTree {
       throw new Error("EINVAL");
     }
 
-    const [dirs, oldNode] = walkDown(this.#root, parts);
+    const [newRoot, oldNode] = detachNode(this.#root, parts);
 
     if (oldNode?.type === "dir" && oldNode.children.size) {
       // Can not delete a non-empty directory.
@@ -109,23 +99,7 @@ export class FileTree {
       return false;
     }
 
-    // Walk up the tree clearing out the deleted node.
-    let node: Dir | undefined;
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const children = new Map(dirs[i]?.children);
-      if (node) {
-        children.set(parts[i], node);
-      } else {
-        children.delete(parts[i]);
-      }
-      node = { type: "dir", children };
-    }
-
-    if (node?.type !== "dir") {
-      throw new Error("EASSERT");
-    }
-
-    this.#root = node;
+    this.#root = newRoot;
     this.#notifyWatchers(path);
     return true;
   }
@@ -137,51 +111,20 @@ export class FileTree {
     }
 
     const oldParts = splitPath(oldPath);
-
-    const [oldDirs, oldNode] = walkDown(this.#root, oldParts);
-    if (!oldNode) {
+    const [movingRoot, movingNode] = detachNode(this.#root, oldParts);
+    if (!movingNode) {
       throw new Error("ENOENT");
     }
 
-    // Walk up the tree clearing out the deleted node.
-    let node: Dir | undefined;
-    for (let i = oldParts.length - 1; i >= 0; i--) {
-      const children = new Map(oldDirs[i]?.children);
-      if (node) {
-        children.set(oldParts[i], node);
-      } else {
-        children.delete(oldParts[i]);
-      }
-      node = { type: "dir", children };
-    }
-    if (!oldParts.length) {
-      node = { type: "dir", children: new Map() };
-    }
-
-    if (node?.type !== "dir") {
-      throw new Error("EASSERT");
-    }
-
     const newParts = splitPath(newPath);
-    const [newDirs, newNode] = walkDown(node, newParts);
+    const [newRoot, replacedNode] = attachNode(movingRoot, newParts, movingNode);
 
-    if (newNode && (newNode.type !== "blob" || oldNode.type !== "blob")) {
+    if (replacedNode && (replacedNode.type !== "blob" || movingNode.type !== "blob")) {
       // Can move a blob on top of another blob, but other combinations fail.
       throw new Error("EEXIST");
     }
 
-    // Walk up the tree creating updated nodes.
-    let node2: Dir | Blob = oldNode;
-    for (let i = newParts.length - 1; i >= 0; i--) {
-      const children = new Map(newDirs[i]?.children);
-      children.set(newParts[i], node2);
-      node2 = { type: "dir", children };
-    }
-    if (node2?.type !== "dir") {
-      throw new Error("EASSERT");
-    }
-
-    this.#root = node2;
+    this.#root = newRoot;
     this.#notifyWatchers(oldPath);
     this.#notifyWatchers(newPath);
   }
@@ -239,6 +182,55 @@ function walkDown(root: Dir, parts: string[]): [Dir[], Dir | Blob | undefined] {
   return [dirs, node];
 }
 
+function detachNode(root: Dir, parts: string[]): [Dir, Dir | Blob | undefined] {
+  const [dirs, oldNode] = walkDown(root, parts);
+  if (!oldNode) {
+    // Nothing changed.
+    return [root, undefined];
+  }
+
+  let newNode: Dir | undefined;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const dir = arrayGet(dirs, i);
+    const part = arrayGet(parts, i);
+
+    const children = new Map(dir.children);
+    if (newNode) {
+      children.set(part, newNode);
+    } else {
+      children.delete(part);
+    }
+    newNode = { type: "dir", children };
+  }
+  if (!newNode) {
+    // Detached the root, so create a new one.
+    newNode = { type: "dir", children: new Map() };
+  }
+
+  return [newNode, oldNode];
+}
+
+function attachNode(
+  root: Dir,
+  parts: string[],
+  newNode: Dir | Blob,
+): [Dir, Dir | Blob | undefined] {
+  const [dirs, oldNode] = walkDown(root, parts);
+
+  // Walk up the tree creating updated nodes.
+  let node: Dir | Blob = newNode;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const children = new Map(dirs[i]?.children);
+    children.set(arrayGet(parts, i), node);
+    node = { type: "dir", children };
+  }
+  if (node?.type !== "dir") {
+    throw new Error("Internal error: root node must be a Dir");
+  }
+
+  return [node, oldNode];
+}
+
 if (import.meta.vitest) {
   const { describe, expect, it } = import.meta.vitest;
 
@@ -288,8 +280,8 @@ if (import.meta.vitest) {
     it("should return root and undefined when no parts", () => {
       const root: Dir = { type: "dir", children: new Map() };
       const [dirs, node] = walkDown(root, []);
-      expect(dirs).toEqual([root]);
-      expect(node).toBeUndefined();
+      expect(dirs).toEqual([]);
+      expect(node).toBe(root);
     });
 
     it("should throw ENOTDIR when a blob is in the path", () => {
@@ -300,14 +292,142 @@ if (import.meta.vitest) {
       expect(() => walkDown(root, ["file.txt", "sub"])).toThrow("ENOTDIR");
     });
 
-    it("should return undefined node when path ends at a directory", () => {
+    it("should return the node when path ends at a directory", () => {
+      const dir: Dir = { type: "dir", children: new Map() };
       const root: Dir = {
         type: "dir",
-        children: new Map([["dir", { type: "dir", children: new Map() }]]),
+        children: new Map([["dir", dir]]),
       };
       const [dirs, node] = walkDown(root, ["dir"]);
       expect(dirs).toEqual([root]);
-      expect(node).toBeUndefined();
+      expect(node).toBe(dir);
     });
   });
+
+  describe("detachNode", () => {
+    it("should return root and undefined if node not found", () => {
+      const root: Dir = { type: "dir", children: new Map() };
+      const [newRoot, node] = detachNode(root, ["missing"]);
+      expect(newRoot).toBe(root);
+      expect(node).toBeUndefined();
+    });
+
+    it("should detach a blob from the root", () => {
+      const blob: Blob = { type: "blob", content: ["hello"] };
+      const root: Dir = {
+        type: "dir",
+        children: new Map([["file.txt", blob]]),
+      };
+      const [newRoot, detached] = detachNode(root, ["file.txt"]);
+      expect(detached).toBe(blob);
+      expect(newRoot.children.has("file.txt")).toBe(false);
+      expect(newRoot).not.toBe(root);
+    });
+
+    it("should detach a directory from the root", () => {
+      const subDir: Dir = { type: "dir", children: new Map() };
+      const root: Dir = {
+        type: "dir",
+        children: new Map([["folder", subDir]]),
+      };
+      const [newRoot, detached] = detachNode(root, ["folder"]);
+      expect(detached).toBe(subDir);
+      expect(newRoot.children.has("folder")).toBe(false);
+      expect(newRoot).not.toBe(root);
+    });
+
+    it("should detach a deeply nested node", () => {
+      const blob: Blob = { type: "blob", content: ["deep"] };
+      const innerDir: Dir = { type: "dir", children: new Map([["file.txt", blob]]) };
+      const outerDir: Dir = { type: "dir", children: new Map([["inner", innerDir]]) };
+      const root: Dir = { type: "dir", children: new Map([["outer", outerDir]]) };
+
+      const [newRoot, detached] = detachNode(root, ["outer", "inner", "file.txt"]);
+      expect(detached).toBe(blob);
+
+      const finalOuter = newRoot.children.get("outer");
+      expectIsDir(finalOuter);
+
+      const finalInner = finalOuter.children.get("inner");
+      expectIsDir(finalInner);
+
+      expect(finalInner.children.has("file.txt")).toBe(false);
+      expect(newRoot).not.toBe(root);
+    });
+
+    it("should handle detaching the root itself (empty parts)", () => {
+      const root: Dir = {
+        type: "dir",
+        children: new Map([["file.txt", { type: "blob", content: ["x"] }]]),
+      };
+      const [newRoot, detached] = detachNode(root, []);
+      expect(detached).toBe(root);
+      expect(newRoot.children.size).toBe(0);
+      expect(newRoot).not.toBe(root);
+    });
+  });
+
+  describe("attachNode", () => {
+    it("should attach a blob to the root", () => {
+      const root: Dir = { type: "dir", children: new Map() };
+      const blob: Blob = { type: "blob", content: ["hello"] };
+      const [newRoot, oldNode] = attachNode(root, ["file.txt"], blob);
+      expect(oldNode).toBeUndefined();
+      expect(newRoot.children.get("file.txt")).toBe(blob);
+      expect(newRoot).not.toBe(root);
+    });
+
+    it("should replace an existing blob", () => {
+      const oldBlob: Blob = { type: "blob", content: ["old"] };
+      const root: Dir = {
+        type: "dir",
+        children: new Map([["file.txt", oldBlob]]),
+      };
+      const newBlob: Blob = { type: "blob", content: ["new"] };
+      const [newRoot, oldNode] = attachNode(root, ["file.txt"], newBlob);
+      expect(oldNode).toBe(oldBlob);
+      expect(newRoot.children.get("file.txt")).toBe(newBlob);
+      expect(newRoot).not.toBe(root);
+    });
+
+    it("should attach a directory to the root", () => {
+      const root: Dir = { type: "dir", children: new Map() };
+      const subDir: Dir = { type: "dir", children: new Map() };
+      const [newRoot, oldNode] = attachNode(root, ["folder"], subDir);
+      expect(oldNode).toBeUndefined();
+      expect(newRoot.children.get("folder")).toBe(subDir);
+      expect(newRoot).not.toBe(root);
+    });
+
+    it("should attach a node deeply", () => {
+      const root: Dir = {
+        type: "dir",
+        children: new Map([["outer", { type: "dir", children: new Map() }]]),
+      };
+      const blob: Blob = { type: "blob", content: ["deep"] };
+      const [newRoot, oldNode] = attachNode(root, ["outer", "inner", "file.txt"], blob);
+
+      expect(oldNode).toBeUndefined();
+
+      const outer = newRoot.children.get("outer");
+      expectIsDir(outer);
+      const inner = outer.children.get("inner");
+      expectIsDir(inner);
+      expect(inner.children.get("file.txt")).toBe(blob);
+      expect(newRoot).not.toBe(root);
+    });
+
+    it("should throw ENOTDIR if path contains a blob", () => {
+      const root: Dir = {
+        type: "dir",
+        children: new Map([["file.txt", { type: "blob", content: ["x"] }]]),
+      };
+      const newNode: Blob = { type: "blob", content: ["y"] };
+      expect(() => attachNode(root, ["file.txt", "sub"], newNode)).toThrow("ENOTDIR");
+    });
+  });
+
+  function expectIsDir(value: Dir | Blob | undefined): asserts value is Dir {
+    expect(value?.type).toBe("dir");
+  }
 }
