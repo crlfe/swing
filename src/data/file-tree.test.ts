@@ -343,4 +343,80 @@ describe("FileTree", () => {
       expect(cb2).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("walk", () => {
+    it("should throw ENOENT for non-existent path", () => {
+      expect(() => tree.walk("nonexistent", () => {})).toThrow("ENOENT");
+    });
+
+    it("should walk a single file", () => {
+      tree.write("file.txt", ["content"]);
+      const visited: string[] = [];
+      tree.walk("file.txt", (path) => {
+        visited.push(path);
+      });
+      expect(visited).toEqual(["file.txt"]);
+    });
+
+    it("should walk a directory and its contents", () => {
+      tree.write("dir/file1.txt", ["1"]);
+      tree.write("dir/file2.txt", ["2"]);
+      tree.write("dir/subdir/file3.txt", ["3"]);
+
+      const visited: string[] = [];
+      tree.walk("dir", (path) => {
+        visited.push(path);
+      });
+
+      expect(visited).toContain("dir");
+      expect(visited).toContain("dir/file1.txt");
+      expect(visited).toContain("dir/file2.txt");
+      expect(visited).toContain("dir/subdir");
+      expect(visited).toContain("dir/subdir/file3.txt");
+      expect(visited.length).toBe(5);
+    });
+
+    it("should stop walking when callback returns false", () => {
+      tree.write("dir/file1.txt", ["1"]);
+      tree.write("dir/file2.txt", ["2"]);
+
+      const visited: string[] = [];
+      tree.walk("dir", (path) => {
+        visited.push(path);
+        if (path === "dir") return false;
+      });
+
+      expect(visited).toEqual(["dir"]);
+    });
+
+    it("should handle trailing slashes in path", () => {
+      tree.write("dir/file.txt", ["content"]);
+      const visited: string[] = [];
+      tree.walk("dir/", (path) => {
+        visited.push(path);
+      });
+      expect(visited).toEqual(["dir", "dir/file.txt"]);
+    });
+
+    it("should walk from the root", () => {
+      tree.write("a.txt", ["a"]);
+      tree.write("b/c.txt", ["b"]);
+
+      const visited: string[] = [];
+      tree.walk("", (path) => {
+        visited.push(path);
+      });
+
+      expect(visited).toEqual(["a.txt", "b", "b/c.txt"]);
+    });
+
+    it("should handle dot and double-dot in starting path", () => {
+      tree.write("a/b/c.txt", ["content"]);
+      const visited: string[] = [];
+      tree.walk("a/./b/../b", (path) => {
+        visited.push(path);
+      });
+      expect(visited).toEqual(["a/b", "a/b/c.txt"]);
+    });
+  });
 });

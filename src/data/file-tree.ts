@@ -45,6 +45,29 @@ export class FileTree {
     };
   }
 
+  walk(
+    path: string,
+    callback: (path: string, node: Dir | Blob) => boolean | undefined | void,
+  ): void {
+    const parts = splitPath(path);
+    const node = walkDown(this.#root, parts)[1];
+    if (!node) {
+      throw new Error("ENOENT");
+    }
+    recurse(parts, node);
+
+    function recurse(parts: string[], node: Blob | Dir) {
+      if (parts.length && callback(parts.join("/"), node) === false) {
+        return;
+      }
+      if (node.type === "dir") {
+        for (const [name, child] of node.children) {
+          recurse([...parts, name], child);
+        }
+      }
+    }
+  }
+
   read(path: string): ReadonlyArray<string> | undefined {
     const node = this.getNode(path);
     if (node?.type === "dir") {
