@@ -1,17 +1,17 @@
 import { type Tool } from "../chat/types.ts";
 import { arrayGet } from "../util.ts";
 
-interface EditFileArgs {
+interface ReplaceLinesArgs {
   path: string;
   search: string;
   replace: string;
 }
 
-const editFileTool: Tool = {
+const replaceLinesTool: Tool = {
   definition: {
     type: "function",
     function: {
-      name: "edit_file",
+      name: "replace_lines",
       description:
         "Finds a search string in a file and replaces it with a replacement string. Matches lines by trimming whitespace to be resilient to indentation differences.",
       parameters: {
@@ -26,12 +26,12 @@ const editFileTool: Tool = {
     },
   },
   execute: async (args, { logInfo, fs }) => {
-    const { path, search, replace } = args as EditFileArgs;
+    const { path, search, replace } = args as ReplaceLinesArgs;
     if (typeof path !== "string" || typeof search !== "string" || typeof replace !== "string") {
       throw new Error("Arguments 'path', 'search', and 'replace' must be strings");
     }
     if (logInfo) {
-      logInfo(`Editing file: ${path}`);
+      logInfo(`Replacing lines in: ${path}`);
     }
     try {
       const content = fs.read(path);
@@ -89,4 +89,4 @@ const editFileTool: Tool = {
   },
 };
 
-export default editFileTool;
+export default replaceLinesTool;

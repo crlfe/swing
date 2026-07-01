@@ -1,11 +1,13 @@
 import type { ChatContext } from "./chat/context.ts";
 import type { Message, Tool, ToolCall } from "./chat/types.ts";
 import type { Files } from "./fs.ts";
+import appendLinesTool from "./tools/append_lines.ts";
 import deleteFileTool from "./tools/delete_file.ts";
-import editFileTool from "./tools/edit_file.ts";
+import insertLinesTool from "./tools/insert_lines.ts";
 import listFilesTool from "./tools/list_files.ts";
 import moveFileTool from "./tools/move_file.ts";
 import readFileTool from "./tools/read_file.ts";
+import replaceLinesTool from "./tools/replace_lines.ts";
 import searchFilesTool from "./tools/search_files.ts";
 import writeFileTool from "./tools/write_file.ts";
 
@@ -24,7 +26,9 @@ const toolRegistry: Record<string, Tool> = {
   [listFilesTool.definition.function.name]: listFilesTool,
   [readFileTool.definition.function.name]: readFileTool,
   [searchFilesTool.definition.function.name]: searchFilesTool,
-  [editFileTool.definition.function.name]: editFileTool,
+  [replaceLinesTool.definition.function.name]: replaceLinesTool,
+  [appendLinesTool.definition.function.name]: appendLinesTool,
+  [insertLinesTool.definition.function.name]: insertLinesTool,
   [writeFileTool.definition.function.name]: writeFileTool,
   [moveFileTool.definition.function.name]: moveFileTool,
   [deleteFileTool.definition.function.name]: deleteFileTool,

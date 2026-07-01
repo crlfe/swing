@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { ChatConfig } from "../chat.ts";
 import { Files } from "../fs.ts";
+import appendLinesTool from "./append_lines.ts";
 import deleteFileTool from "./delete_file.ts";
-import editFileTool from "./edit_file.ts";
+import insertLinesTool from "./insert_lines.ts";
 import listFilesTool from "./list_files.ts";
 import moveFileTool from "./move_file.ts";
 import readFileTool from "./read_file.ts";
+import replaceLinesTool from "./replace_lines.ts";
 import searchFilesTool from "./search_files.ts";
 import writeFileTool from "./write_file.ts";
 
@@ -85,10 +87,10 @@ describe("Tools", () => {
     });
   });
 
-  describe("edit_file", () => {
+  describe("replace_lines", () => {
     it("should replace a string in a file", async () => {
       fs.write("test.txt", "Hello World\nThis is a test");
-      const result = await editFileTool.execute(
+      const result = await replaceLinesTool.execute(
         {
           path: "test.txt",
           search: "Hello World",
@@ -103,7 +105,7 @@ describe("Tools", () => {
 
     it("should be resilient to indentation (trimmed match)", async () => {
       fs.write("test.ts", "function test() {\n  console.log('hi');\n}");
-      const result = await editFileTool.execute(
+      const result = await replaceLinesTool.execute(
         {
           path: "test.ts",
           search: "console.log('hi');",
@@ -118,11 +120,95 @@ describe("Tools", () => {
 
     it("should return error if search string not found", async () => {
       fs.write("test.txt", "Hello World");
-      const result = await editFileTool.execute(
+      const result = await replaceLinesTool.execute(
         {
           path: "test.txt",
           search: "Ghost",
           replace: "Found",
+        },
+        config,
+      );
+      expect(result).toContain("ERR Search string not found");
+    });
+  });
+
+  describe("append_lines", () => {
+    it("should append to the end of a file when no search is provided", async () => {
+      fs.write("test.txt", "line 1");
+      const result = await appendLinesTool.execute(
+        {
+          path: "test.txt",
+          content: "line 2",
+        },
+        config,
+      );
+      expect(result).toContain("OK appended to end");
+      expect(fs.read("test.txt")).toBe("line 1\nline 2");
+    });
+
+    it("should append after a search string", async () => {
+      fs.write("test.txt", "start\nmiddle\nend");
+      const result = await appendLinesTool.execute(
+        {
+          path: "test.txt",
+          content: "inserted",
+          search: "middle",
+        },
+        config,
+      );
+      expect(result).toContain("OK appended content after match");
+      expect(fs.read("test.txt")).toBe("start\nmiddle\ninserted\nend");
+    });
+
+    it("should return error if search string not found", async () => {
+      fs.write("test.txt", "hello");
+      const result = await appendLinesTool.execute(
+        {
+          path: "test.txt",
+          content: "world",
+          search: "ghost",
+        },
+        config,
+      );
+      expect(result).toContain("ERR Search string not found");
+    });
+  });
+
+  describe("insert_lines", () => {
+    it("should insert at the beginning when no search is provided", async () => {
+      fs.write("test.txt", "line 2");
+      const result = await insertLinesTool.execute(
+        {
+          path: "test.txt",
+          content: "line 1",
+        },
+        config,
+      );
+      expect(result).toContain("OK inserted at beginning");
+      expect(fs.read("test.txt")).toBe("line 1\nline 2");
+    });
+
+    it("should insert before a search string", async () => {
+      fs.write("test.txt", "start\nmiddle\nend");
+      const result = await insertLinesTool.execute(
+        {
+          path: "test.txt",
+          content: "inserted",
+          search: "middle",
+        },
+        config,
+      );
+      expect(result).toContain("OK inserted content before match");
+      expect(fs.read("test.txt")).toBe("start\ninserted\nmiddle\nend");
+    });
+
+    it("should return error if search string not found", async () => {
+      fs.write("test.txt", "hello");
+      const result = await insertLinesTool.execute(
+        {
+          path: "test.txt",
+          content: "world",
+          search: "ghost",
         },
         config,
       );
