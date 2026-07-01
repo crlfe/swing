@@ -9,7 +9,7 @@
     "dev": "vite",
     "preview": "vite preview",
     "format": "oxfmt",
-    "check": "oxlint && oxfmt --check",
+    "check": "oxlint && oxfmt --check && tsc --noEmit",
     "test": "vitest"
   },
   "dependencies": {
@@ -25,6 +25,7 @@
     "@types/node": "^26.0.1",
     "oxfmt": "^0.49.0",
     "oxlint": "^1.64.0",
+    "typescript": "^7.0.1-rc",
     "vite": "^8.1.0",
     "vitest": "^4.1.9"
   },

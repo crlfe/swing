@@ -1,3 +1,4 @@
+import { arrayGet } from "../util.ts";
 import type { PatchHunk } from "./types.ts";
 
 /**
@@ -32,7 +33,7 @@ export function diffLinesMyers(oldLines: string[], newLines: string[]): PatchHun
   // The "V" array stores the furthest reaching x-coordinate on each diagonal k
   // k = x - y
   const max = n + m;
-  const v = new Int32Array(2 * max + 1);
+  const v = new Int32Array(2 * max + 2);
   const trace: Int32Array[] = [];
 
   let x = 0;
@@ -42,10 +43,10 @@ export function diffLinesMyers(oldLines: string[], newLines: string[]): PatchHun
   for (let d = 0; d <= max; d++) {
     trace.push(new Int32Array(v));
     for (let k = -d; k <= d; k += 2) {
-      if (k === -d || (k !== d && v[max + k - 1] < v[max + k + 1])) {
-        x = v[max + k + 1];
+      if (k === -d || (k !== d && arrayGet(v, max + k - 1) < arrayGet(v, max + k + 1))) {
+        x = arrayGet(v, max + k + 1);
       } else {
-        x = v[max + k - 1] + 1;
+        x = arrayGet(v, max + k - 1) + 1;
       }
       y = x - k;
 
@@ -79,32 +80,32 @@ function backtrack(
   const edits: { type: "old" | "new" | "same"; line: string }[] = [];
 
   for (let d = trace.length - 1; d >= 0; d--) {
-    const v = trace[d];
+    const v = arrayGet(trace, d);
     const max = n + m;
     const k = x - y;
 
     let prevK: number;
-    if (k === -d || (k !== d && v[max + k - 1] < v[max + k + 1])) {
+    if (k === -d || (k !== d && arrayGet(v, max + k - 1) < arrayGet(v, max + k + 1))) {
       prevK = k + 1;
     } else {
       prevK = k - 1;
     }
 
-    const prevX = v[max + prevK];
+    const prevX = arrayGet(v, max + prevK);
     const prevY = prevX - prevK;
 
     while (x > prevX && y > prevY) {
-      edits.push({ type: "same", line: oldLines[start + x - 1] });
+      edits.push({ type: "same", line: arrayGet(oldLines, start + x - 1) });
       x--;
       y--;
     }
 
     if (d > 0) {
       if (x > prevX) {
-        edits.push({ type: "old", line: oldLines[start + x - 1] });
+        edits.push({ type: "old", line: arrayGet(oldLines, start + x - 1) });
         x--;
       } else if (y > prevY) {
-        edits.push({ type: "new", line: newLines[start + y - 1] });
+        edits.push({ type: "new", line: arrayGet(newLines, start + y - 1) });
         y--;
       }
     }
@@ -119,7 +120,8 @@ function backtrack(
   let currentNewIdx = start;
 
   while (i < edits.length) {
-    if (edits[i].type === "same") {
+    let edit = arrayGet(edits, i);
+    if (edit.type === "same") {
       currentOldIdx++;
       currentNewIdx++;
       i++;
@@ -131,14 +133,20 @@ function backtrack(
     const hunkOldLines: string[] = [];
     const hunkNewLines: string[] = [];
 
-    while (i < edits.length && edits[i].type !== "same") {
-      if (edits[i].type === "old") {
-        hunkOldLines.push(edits[i].line);
+    while (i < edits.length) {
+      let edit = arrayGet(edits, i);
+      if (edit.type === "same") {
+        break;
+      }
+
+      if (edit.type === "old") {
+        hunkOldLines.push(edit.line);
         currentOldIdx++;
-      } else if (edits[i].type === "new") {
-        hunkNewLines.push(edits[i].line);
+      } else if (edit.type === "new") {
+        hunkNewLines.push(edit.line);
         currentNewIdx++;
       }
+
       i++;
     }
 

@@ -1,4 +1,5 @@
 import { type Tool } from "../chat/types.ts";
+import { arrayGet } from "../util.ts";
 
 interface EditFileArgs {
   path: string;
@@ -51,7 +52,7 @@ const editFileTool: Tool = {
       for (let i = 0; i <= fileLines.length - searchLines.length; i++) {
         let match = true;
         for (let j = 0; j < searchLines.length; j++) {
-          if (fileLines[i + j].trim() !== trimmedSearchLines[j]) {
+          if (arrayGet(fileLines, i + j).trim() !== trimmedSearchLines[j]) {
             match = false;
             break;
           }
@@ -61,15 +62,14 @@ const editFileTool: Tool = {
         }
       }
 
-      if (matches.length === 0) {
+      const matchStartIndex = matches[0];
+      if (matchStartIndex == undefined) {
         return `ERR Search string not found in file ${path} (tried line-by-line trimmed match)`;
       }
-
       if (matches.length > 1) {
         return `ERR Multiple matches found for search string in ${path}. Please be more specific with the search string to ensure only one match exists.`;
       }
 
-      const matchStartIndex = matches[0];
       const matchEndIndex = matchStartIndex + searchLines.length;
 
       // Construct new content
@@ -82,7 +82,7 @@ const editFileTool: Tool = {
       const newContent = newLines.join("\n");
       fs.write(path, newContent);
 
-      return `OK edited ${path}:${matchStartIndex + 1}-${matchEndIndex}`;
+      return `OK edited ${path} to replace ${matchStartIndex + 1}-${matchEndIndex}`;
     } catch (e: any) {
       return `ERR ${e.message}`;
     }

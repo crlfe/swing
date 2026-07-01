@@ -59,7 +59,7 @@ async function saveFiles(root: string, files: Files): Promise<number> {
       if (existingContent === content) {
         shouldWrite = false;
       }
-    } catch (e) {
+    } catch {
       // File doesn't exist, so shouldWrite remains true
     }
 

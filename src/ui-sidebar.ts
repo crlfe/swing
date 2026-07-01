@@ -82,9 +82,7 @@ export function renderSidebar(
     const items = e.dataTransfer?.items;
     if (!items) return;
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-
+    for (const item of items) {
       const entry = item.webkitGetAsEntry?.();
       if (entry) {
         async function* walk(

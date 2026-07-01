@@ -163,9 +163,10 @@ function initPreviewToggle(): void {
 initSidebar();
 initPreviewToggle();
 renderChat(fs);
-const initialFiles = fs.listWithDirectoriesFirst().filter((path) => !path.endsWith("/"));
-if (initialFiles.length > 0) {
-  handleFileOpen(initialFiles[0]);
+
+const initialFile = fs.listWithDirectoriesFirst().find((path) => !path.endsWith("/"));
+if (initialFile) {
+  handleFileOpen(initialFile);
 } else {
   updateWorkspaceVisibility();
 }

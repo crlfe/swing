@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { ChatContext } from "./context";
-import type { Message } from "./types";
+import { ChatContext } from "./context.ts";
+import type { Message } from "./types.ts";
 
 describe("ChatContext", () => {
   let context: ChatContext;

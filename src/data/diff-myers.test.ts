@@ -111,10 +111,10 @@ describe("diffLines", () => {
     const result = diffLinesMyers(oldLines, newLines);
 
     expect(result).toHaveLength(2);
-    expect(result[0].oldLines).toEqual(["The quick brown fox", "jumps over"]);
-    expect(result[0].newLines).toEqual(["The quick red fox", "leaps over"]);
-    expect(result[1].oldLines).toEqual(["and runs away"]);
-    expect(result[1].newLines).toEqual(["and sleeps"]);
+    expect(result[0]?.oldLines).toEqual(["The quick brown fox", "jumps over"]);
+    expect(result[0]?.newLines).toEqual(["The quick red fox", "leaps over"]);
+    expect(result[1]?.oldLines).toEqual(["and runs away"]);
+    expect(result[1]?.newLines).toEqual(["and sleeps"]);
   });
 
   it("should throw an error for extremely large files", () => {

@@ -10,7 +10,7 @@ export function refreshPreview(
 
   try {
     htmlContent = views[activeHtmlFile]?.state.doc.toString() || fs.read(activeHtmlFile);
-  } catch (e) {
+  } catch {
     htmlContent = "<h1>No HTML file active</h1>";
   }
 
@@ -19,7 +19,7 @@ export function refreshPreview(
     try {
       const content = views[path]?.state.doc.toString() || fs.read(path);
       return `<style>\n${content}\n</style>`;
-    } catch (e) {
+    } catch {
       return match;
     }
   });
@@ -29,7 +29,7 @@ export function refreshPreview(
     try {
       const content = views[path]?.state.doc.toString() || fs.read(path);
       return `<script>\n${content}\n</script>`;
-    } catch (e) {
+    } catch {
       return match;
     }
   });

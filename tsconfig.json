@@ -9,6 +9,7 @@
     "strict": true,
     "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
+    "noUncheckedIndexedAccess": true,
 
     "types": ["vite/client", "vitest/importMeta"]
   },
