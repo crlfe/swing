@@ -37,13 +37,15 @@ const insertLinesTool: Tool = {
       logInfo(`Inserting lines in: ${path}`);
     }
     try {
-      const fileContent = fs.read(path);
-      const fileLines = fileContent.split(/\r?\n/);
+      const fileLines = fs.read(path);
+      if (!fileLines) {
+        return `ERR File not found: ${path}`;
+      }
       const insertLines = content.split(/\r?\n/);
 
       if (!search) {
         const newLines = [...insertLines, ...fileLines];
-        fs.write(path, newLines.join("\n"));
+        fs.write(path, newLines);
         return `OK inserted at beginning of ${path}`;
       }
 
@@ -77,7 +79,7 @@ const insertLinesTool: Tool = {
         ...fileLines.slice(matchStartIndex),
       ];
 
-      fs.write(path, newLines.join("\n"));
+      fs.write(path, newLines);
       return `OK inserted content before match in ${path}`;
     } catch (e: any) {
       return `ERR ${e.message}`;

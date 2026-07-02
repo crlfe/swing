@@ -1,7 +1,8 @@
 import JSZip from "jszip";
 
+import type { FileTree } from "./data/file-tree.ts";
+import type { TreeDir } from "./data/types.ts";
 import { getExampleFiles } from "./fs-example.ts";
-import { type Files, type FileTreeNode } from "./fs.ts";
 import { h } from "./h.ts";
 import { state } from "./state.ts";
 
@@ -26,13 +27,13 @@ function resolvePath(currentPath: string, inputPath: string): string {
   return inputPath;
 }
 
-async function downloadProjectAsZip(fs: Files) {
+async function downloadProjectAsZip(fs: FileTree) {
   try {
     const zip = new JSZip();
-    const allFiles = Object.keys((fs as any).files);
+    const allFiles = fs.list();
 
     allFiles.forEach((path) => {
-      const content = fs.read(path);
+      const content = fs.read(path)?.join("\n") ?? "";
       zip.file(path, content);
     });
 
@@ -58,7 +59,7 @@ async function downloadProjectAsZip(fs: Files) {
 }
 
 export function renderSidebar(
-  fs: Files,
+  fs: FileTree,
   onOpen: (path: string, isNew?: boolean) => void,
   onRename: (li: HTMLElement, path: string) => void,
   onDelete: (path: string) => void,
@@ -105,7 +106,7 @@ export function renderSidebar(
         }
         for await (const [path, file] of walk("", [entry])) {
           const text = await file.text();
-          fs.write(path, text);
+          fs.write(path, text.split("\n"));
           state.updateViewContent(path, text);
           onOpen(path);
         }
@@ -115,7 +116,7 @@ export function renderSidebar(
       const file = item.getAsFile();
       if (file) {
         const text = await file.text();
-        fs.write(file.name, text);
+        fs.write(file.name, text.split("\n"));
         state.updateViewContent(file.name, text);
         onOpen(file.name);
       }
@@ -129,32 +130,35 @@ export function renderSidebar(
   const updateTree = () => {
     list.replaceChildren();
 
-    const renderTree = (node: FileTreeNode, level = 0): void => {
-      node.children.forEach((child) => {
+    const renderTree = (node: TreeDir, currentPath = "", level = 0): void => {
+      node.children.entries().forEach(([name, child]) => {
+        const path = currentPath ? `${currentPath}/${name}` : name;
+        const isDir = child.type === "dir";
         const li = h(
           "li",
           {
             class: "file-item",
             style: `padding-left: ${15 + level * 12}px`,
-            ...(child.isDirectory
+            ...(isDir
               ? {}
               : {
-                  "data-filename": child.path,
-                  onclick: () => onOpen(child.path),
+                  "data-filename": path,
+                  onclick: () => onOpen(path),
                   ondblclick: (e: Event) => {
                     e.stopPropagation();
-                    onRename(li, child.path);
+                    onRename(li, path);
                   },
                 }),
           },
-          [h("span", {}, [(child.isDirectory ? "📁 " : "📄 ") + child.name])],
+          [h("span", {}, [(isDir ? "📁 " : "📄 ") + name])],
         );
 
         list.appendChild(li);
-        if (child.isDirectory) renderTree(child, level + 1);
+        if (isDir) renderTree(child, path, level + 1);
       });
     };
-    renderTree(fs.getTree());
+
+    renderTree(fs.getRoot());
 
     const actions = h(
       "div",
@@ -219,7 +223,7 @@ export function renderSidebar(
     list.appendChild(actions);
   };
 
-  fs.addEventListener("change", updateTree);
+  fs.watch("", updateTree);
   updateTree();
 }
 

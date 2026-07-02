@@ -7,15 +7,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { sendMessageStream, type ChatConfig } from "../chat.ts";
 import { ChatContext } from "../chat/context.ts";
-import { Files } from "../fs.ts";
+import { FileTree } from "../data/file-tree.ts";
+import type { RecursiveRecord } from "../data/trees.ts";
+import type { TreeDir, TreeNode } from "../data/types.ts";
 
-async function loadFiles(base: string): Promise<Files> {
-  // Ensure this has a trailing slash so it can be used as a prefix.
-  const rootHref = pathToFileURL(base).href.replace(/\/?$/, "/");
+async function loadFiles(path: string): Promise<FileTree> {
+  async function walk(path: string): Promise<TreeDir> {
+    const children = new Map<string, TreeNode>();
 
-  const files: Record<string, string> = {};
-
-  async function walk(path: string) {
     const entries = await nodeFs.readdir(path, { withFileTypes: true });
     for (const entry of entries) {
       if ([".git", "dist", "node_modules", "pnpm-lock.yaml"].includes(entry.name)) {
@@ -24,33 +23,27 @@ async function loadFiles(base: string): Promise<Files> {
 
       const entryPath = nodePath.resolve(entry.parentPath, entry.name);
       if (entry.isDirectory()) {
-        await walk(entryPath);
+        children.set(entry.name, await walk(entryPath));
       } else {
-        const entryHref = pathToFileURL(entryPath).href;
-        const entryRel = entryHref.slice(rootHref.length);
         const content = await nodeFs.readFile(entryPath, "utf8");
-        files[entryRel] = content;
+        children.set(entry.name, { type: "blob", content: content.split("\n") });
       }
     }
-  }
 
-  await walk(base);
-  const filesInstance = new Files();
-  filesInstance.fromJSON(files);
-  return filesInstance;
+    return { type: "dir", children };
+  }
+  return new FileTree(await walk(path));
 }
 
-async function saveFiles(root: string, files: Files): Promise<number> {
+async function saveFiles(root: string, files: FileTree): Promise<number> {
   let changed = 0;
   const rootHref = pathToFileURL(root).href.replace(/\/?$/, "/");
+  await files.walkAsync("", async (path, node) => {
+    if (node.type !== "blob") return;
 
-  for (const [entryRel, content] of Object.entries(files.toJSON())) {
-    const entryHref = new URL(entryRel, rootHref).href;
-    if (!entryHref.startsWith(rootHref)) {
-      throw new Error("Assertion failed: Logic error or path traversal attack");
-    }
+    const content = node.content.join("\n");
 
-    const entryPath = fileURLToPath(entryHref);
+    const entryPath = fileURLToPath(new URL(path, rootHref).href);
 
     let shouldWrite = true;
     try {
@@ -69,7 +62,7 @@ async function saveFiles(root: string, files: Files): Promise<number> {
       await nodeFs.mkdir(nodePath.dirname(entryPath), { recursive: true });
       await nodeFs.writeFile(entryPath, content, "utf8");
     }
-  }
+  });
 
   return changed;
 }
@@ -89,7 +82,7 @@ async function run() {
     model: chatModel,
     key: chatKey,
     stream: true,
-    fs: new Files(),
+    fs: await loadFiles(process.cwd()),
     context: new ChatContext(),
 
     logText(msg: string) {
@@ -99,12 +92,6 @@ async function run() {
       process.stderr.write(msg + "\n");
     },
   };
-
-  try {
-    config.fs = await loadFiles(process.cwd());
-  } catch (e) {
-    console.error("Failed to load files:", e);
-  }
 
   const systemPrompt = "You are a helpful AI assistant. Be concise and professional.";
   config.context.addMessage({ role: "system", content: systemPrompt });

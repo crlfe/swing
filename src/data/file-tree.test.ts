@@ -34,9 +34,9 @@ describe("FileTree", () => {
       expect(node).toEqual({ type: "blob", content: ["content"] });
     });
 
-    it("should return undefined for a non-existent path", () => {
-      expect(tree.getNode("nonexistent")).toBeUndefined();
-      expect(tree.getNode("a/nonexistent")).toBeUndefined();
+    it("should not exist for a non-existent path", () => {
+      expect(tree.has("nonexistent")).toBe(false);
+      expect(tree.has("a/nonexistent")).toBe(false);
     });
 
     it('should handle "." and ".." in paths', () => {
@@ -53,8 +53,8 @@ describe("FileTree", () => {
       expect(tree.read("test.txt")).toEqual(["hello world"]);
     });
 
-    it("should return undefined for a non-existent file", () => {
-      expect(tree.read("missing.txt")).toBeUndefined();
+    it("should throw for a non-existent file", () => {
+      expect(tree.has("missing.txt")).toBe(false);
     });
 
     it("should throw when reading a directory", () => {
@@ -131,23 +131,21 @@ describe("FileTree", () => {
   });
 
   describe("delete", () => {
-    it("should delete an existing file", () => {
+    it("should not exist after deleting an existing file", () => {
       tree.write("file.txt", ["content"]);
-      const result = tree.delete("file.txt");
-      expect(result).toBe(true);
-      expect(tree.getNode("file.txt")).toBeUndefined();
+      tree.delete("file.txt");
+      expect(tree.has("file.txt")).toBe(false);
     });
 
-    it("should return false when deleting a non-existent path", () => {
-      expect(tree.delete("nonexistent")).toBe(false);
+    it("should throw when deleting a non-existent path", () => {
+      expect(() => tree.delete("nonexistent")).toThrow();
     });
 
-    it("should delete an empty directory", () => {
+    it("should not exist after deleting an empty directory", () => {
       tree.write("dir/file.txt", ["content"]);
       tree.delete("dir/file.txt");
-      const result = tree.delete("dir");
-      expect(result).toBe(true);
-      expect(tree.getNode("dir")).toBeUndefined();
+      tree.delete("dir");
+      expect(tree.has("dir")).toBe(false);
     });
 
     it("should throw when deleting a non-empty directory", () => {
@@ -160,8 +158,8 @@ describe("FileTree", () => {
       expect(() => tree.delete("file.txt/sub")).toThrow("Path component is not a directory");
     });
 
-    it("should return true when deleting an empty path (root is empty)", () => {
-      expect(tree.delete("")).toBe(true);
+    it("should delete the root", () => {
+      expect(() => tree.delete("")).not.toThrow();
     });
 
     it("should throw when deleting an empty path and root is not empty", () => {
@@ -169,34 +167,33 @@ describe("FileTree", () => {
       expect(() => tree.delete("")).toThrow("Directory not empty");
     });
 
-    it("should delete a non-empty directory when recursive is true", () => {
+    it("should not exist after deleting a non-empty directory recursively", () => {
       tree.write("dir/file1.txt", ["1"]);
       tree.write("dir/file2.txt", ["2"]);
-      const result = tree.delete("dir", { recursive: true });
-      expect(result).toBe(true);
-      expect(tree.getNode("dir")).toBeUndefined();
+      tree.delete("dir", { recursive: true });
+      expect(tree.has("dir")).toBe(false);
     });
 
-    it("should delete a deeply nested directory recursively", () => {
+    it("should not exist after deleting a deeply nested directory recursively", () => {
       tree.write("a/b/c/file.txt", ["content"]);
-      const result = tree.delete("a", { recursive: true });
-      expect(result).toBe(true);
-      expect(tree.getNode("a")).toBeUndefined();
+      tree.delete("a", { recursive: true });
+      expect(tree.has("a")).toBe(false);
     });
 
     it("should delete deeply nested empty directories", () => {
       tree.write("a/b/c/d/e.txt", ["nested"]);
       tree.delete("a/b/c/d/e.txt");
-      expect(tree.delete("a/b/c/d")).toBe(true);
-      expect(tree.delete("a/b/c")).toBe(true);
-      expect(tree.delete("a/b")).toBe(true);
-      expect(tree.delete("a")).toBe(true);
+      tree.delete("a/b/c/d");
+      tree.delete("a/b/c");
+      tree.delete("a/b");
+      tree.delete("a");
+      expect(tree.has("a")).toBe(false);
     });
 
-    it("should handle double-dot in path", () => {
+    it("should not exist after deleting a file via double-dot path", () => {
       tree.write("a/../b.txt", ["content"]);
-      expect(tree.delete("a/../b.txt")).toBe(true);
-      expect(tree.read("b.txt")).toBeUndefined();
+      tree.delete("a/../b.txt");
+      expect(tree.has("b.txt")).toBe(false);
     });
   });
 
@@ -204,21 +201,21 @@ describe("FileTree", () => {
     it("should move a file to a new name in the same directory", () => {
       tree.write("file.txt", ["content"]);
       tree.move("file.txt", "new_file.txt");
-      expect(tree.read("file.txt")).toBeUndefined();
+      expect(tree.has("file.txt")).toBe(false);
       expect(tree.read("new_file.txt")).toEqual(["content"]);
     });
 
     it("should move a file to a different directory", () => {
       tree.write("dir/file.txt", ["content"]);
       tree.move("dir/file.txt", "new_dir/file.txt");
-      expect(tree.read("dir/file.txt")).toBeUndefined();
+      expect(tree.has("dir/file.txt")).toBe(false);
       expect(tree.read("new_dir/file.txt")).toEqual(["content"]);
     });
 
     it("should move a directory to a new location", () => {
       tree.write("dir/file.txt", ["content"]);
       tree.move("dir", "new_dir");
-      expect(tree.getNode("dir")).toBeUndefined();
+      expect(tree.has("dir")).toBe(false);
       expect(tree.read("new_dir/file.txt")).toEqual(["content"]);
     });
 
@@ -260,7 +257,7 @@ describe("FileTree", () => {
     it("should create missing directories when moving a file", () => {
       tree.write("file.txt", ["content"]);
       tree.move("file.txt", "nonexistent_dir/file.txt");
-      expect(tree.read("file.txt")).toBeUndefined();
+      expect(tree.has("file.txt")).toBe(false);
       expect(tree.read("nonexistent_dir/file.txt")).toEqual(["content"]);
     });
 
@@ -439,6 +436,105 @@ describe("FileTree", () => {
         visited.push(path);
       });
       expect(visited).toEqual(["a/b", "a/b/c.txt"]);
+    });
+  });
+
+  describe("fromJSON and toJSON", () => {
+    it("should export and import the tree structure", () => {
+      // The line handling currently ensures a trailing newline on every file.
+      const data = {
+        dir1: {
+          "file1.txt": "content1",
+          subdir: {
+            "file2.txt": "content2",
+          },
+        },
+        "file3.txt": "content3",
+      };
+
+      const tree = new FileTree();
+      tree.fromJSON(data);
+
+      expect(tree.read("dir1/file1.txt")).toEqual(["content1"]);
+      expect(tree.read("dir1/subdir/file2.txt")).toEqual(["content2"]);
+      expect(tree.read("file3.txt")).toEqual(["content3"]);
+      expect(tree.toJSON()).toEqual(data);
+    });
+
+    it("should handle an empty tree", () => {
+      const tree = new FileTree();
+      expect(tree.toJSON()).toEqual({});
+      tree.fromJSON({});
+      expect(tree.getRoot().children.size).toBe(0);
+    });
+  });
+
+  describe("size", () => {
+    it("should return the number of blobs in the tree", () => {
+      tree.write("file1.txt", ["1"]);
+      tree.write("file2.txt", ["2"]);
+      tree.write("dir/file3.txt", ["3"]);
+      expect(tree.size).toBe(3);
+    });
+
+    it("should return 0 for an empty tree", () => {
+      expect(tree.size).toBe(0);
+    });
+
+    it("should update size after deletion", () => {
+      tree.write("file1.txt", ["1"]);
+      tree.write("file2.txt", ["2"]);
+      tree.delete("file1.txt");
+      expect(tree.size).toBe(1);
+    });
+  });
+
+  describe("clear", () => {
+    it("should remove all files and directories", () => {
+      tree.write("file1.txt", ["1"]);
+      tree.write("dir/file2.txt", ["2"]);
+      tree.clear();
+      expect(tree.size).toBe(0);
+      expect(tree.getRoot().children.size).toBe(0);
+    });
+  });
+
+  describe("list", () => {
+    it("should list all paths in alphabetical order", () => {
+      tree.write("b.txt", ["b"]);
+      tree.write("a.txt", ["a"]);
+      tree.write("dir/c.txt", ["c"]);
+
+      expect(tree.list()).toEqual(["a.txt", "b.txt", "dir", "dir/c.txt"]);
+    });
+
+    it("should return an empty array for an empty tree", () => {
+      expect(tree.list()).toEqual([]);
+    });
+  });
+
+  describe("listWithDirectoriesFirst", () => {
+    it("should list paths with directories first and trailing slashes", () => {
+      tree.write("file.txt", ["f"]);
+      tree.write("dir/file.txt", ["df"]);
+      tree.write("dir/subdir/file.txt", ["dsf"]);
+      tree.write("another_dir/file.txt", ["af"]);
+
+      const result = tree.listWithDirectoriesFirst();
+
+      expect(result).toEqual([
+        "another_dir/",
+        "another_dir/file.txt",
+        "dir/",
+        "dir/subdir/",
+        "dir/subdir/file.txt",
+        "dir/file.txt",
+        "file.txt",
+      ]);
+    });
+
+    it("should return an empty array for an empty tree", () => {
+      expect(tree.listWithDirectoriesFirst()).toEqual([]);
     });
   });
 });

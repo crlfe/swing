@@ -104,7 +104,7 @@ export function nodeToObject(src: TreeDir): RecursiveRecord<string, string>;
 export function nodeToObject(src: TreeNode): string | RecursiveRecord<string, string>;
 export function nodeToObject(src: TreeNode): string | RecursiveRecord<string, string> {
   if (src.type === "blob") {
-    return src.content.join("\n") + "\n";
+    return src.content.join("\n");
   } else if (src.type === "dir") {
     return Object.fromEntries(src.children.entries().map(([k, v]) => [k, nodeToObject(v)]));
   } else {

@@ -1,12 +1,12 @@
+import { FileTree } from "./data/file-tree.ts";
 import { createEditor } from "./editor.ts";
 import { getExampleFiles } from "./fs-example.ts";
-import { Files } from "./fs.ts";
 import { state } from "./state.ts";
 import { renderChat } from "./ui-chat.ts";
 import { enterRenameMode, renderSidebar, resolvePath } from "./ui-sidebar.ts";
 import { activateTab, addTab, removeTabUI, updateTabLabel } from "./ui-tabs.ts";
 
-const fs = new Files();
+const fs = new FileTree();
 {
   const STORAGE_KEY = "swing_editor_files";
   const STORAGE_VERSION = 1;
@@ -28,7 +28,7 @@ const fs = new Files();
     fs.fromJSON(getExampleFiles());
   }
 
-  fs.addEventListener("change", () => {
+  fs.watch("", () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({ version: STORAGE_VERSION, files: fs.toJSON() }),
@@ -60,7 +60,7 @@ function switchTab(fileName: string): void {
 function handleFileOpen(path: string, isNew = false): void {
   if (isNew) {
     try {
-      fs.write(path, "");
+      fs.write(path, []);
     } catch (e: any) {
       alert(e.message);
       return;
@@ -88,9 +88,9 @@ function handleFileOpen(path: string, isNew = false): void {
 
     const view = createEditor(
       path,
-      fs.read(path),
+      fs.read(path)?.join("\n") ?? "",
       (content: string) => {
-        fs.write(path, content);
+        fs.write(path, content.split("\n"));
         // debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
       },
       container,

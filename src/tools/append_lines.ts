@@ -37,13 +37,15 @@ const appendLinesTool: Tool = {
       logInfo(`Appending lines in: ${path}`);
     }
     try {
-      const fileContent = fs.read(path);
-      const fileLines = fileContent.split(/\r?\n/);
+      const fileLines = fs.read(path);
+      if (!fileLines) {
+        return `ERR File not found: ${path}`;
+      }
       const appendLines = content.split(/\r?\n/);
 
       if (!search) {
         const newLines = [...fileLines, ...appendLines];
-        fs.write(path, newLines.join("\n"));
+        fs.write(path, newLines);
         return `OK appended to end of ${path}`;
       }
 
@@ -78,7 +80,7 @@ const appendLinesTool: Tool = {
         ...fileLines.slice(insertIndex),
       ];
 
-      fs.write(path, newLines.join("\n"));
+      fs.write(path, newLines);
       return `OK appended content after match in ${path}`;
     } catch (e: any) {
       return `ERR ${e.message}`;

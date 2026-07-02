@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { ChatConfig } from "../chat.ts";
 import { ChatContext } from "../chat/context.ts";
-import { Files } from "../fs.ts";
+import { FileTree } from "../data/file-tree.ts";
 import appendLinesTool from "./append_lines.ts";
 import deleteFileTool from "./delete_file.ts";
 import forgetTool from "./forget.ts";
@@ -17,7 +17,7 @@ import writeFileTool from "./write_file.ts";
 
 describe("Tools", () => {
   let config: ChatConfig;
-  let fs: Files;
+  let fs: FileTree;
 
   beforeEach(() => {
     config = {
@@ -25,7 +25,7 @@ describe("Tools", () => {
       model: "",
       key: "",
 
-      fs: new Files(),
+      fs: new FileTree(),
       context: new ChatContext(),
       logText(_: string) {},
       logInfo(_: string) {},
@@ -35,8 +35,8 @@ describe("Tools", () => {
 
   describe("list_files", () => {
     it("should list files in the root directory", async () => {
-      fs.write("file1.txt", "1");
-      fs.write("dir1/file2.txt", "2");
+      fs.write("file1.txt", ["1"]);
+      fs.write("dir1/file2.txt", ["2"]);
 
       const result = await listFilesTool.execute({ path: "" }, config);
       expect(result).toContain("file1.txt");
@@ -44,8 +44,8 @@ describe("Tools", () => {
     });
 
     it("should list files in a subdirectory", async () => {
-      fs.write("dir1/file2.txt", "2");
-      fs.write("dir1/file3.txt", "3");
+      fs.write("dir1/file2.txt", ["2"]);
+      fs.write("dir1/file3.txt", ["3"]);
 
       const result = await listFilesTool.execute({ path: "dir1" }, config);
       expect(result).toContain("file2.txt");
@@ -58,7 +58,7 @@ describe("Tools", () => {
     });
 
     it("should return error if path is a file", async () => {
-      fs.write("file1.txt", "1");
+      fs.write("file1.txt", ["1"]);
       const result = await listFilesTool.execute({ path: "file1.txt" }, config);
       expect(result).toContain("ERR Path is not a directory");
     });
@@ -66,14 +66,14 @@ describe("Tools", () => {
 
   describe("read_file", () => {
     it("should read a file's content", async () => {
-      fs.write("test.txt", "hello world");
+      fs.write("test.txt", ["hello world"]);
       const result = await readFileTool.execute({ path: "test.txt" }, config);
       expect(result).toContain("OK read test.txt\nhello world");
     });
 
     it("should return error for non-existent file", async () => {
       const result = await readFileTool.execute({ path: "ghost.txt" }, config);
-      expect(result).toContain("ERR File not found");
+      expect(result).toContain("ERR Path not found");
     });
   });
 
@@ -81,19 +81,19 @@ describe("Tools", () => {
     it("should write content to a file", async () => {
       const result = await writeFileTool.execute({ path: "new.txt", content: "content" }, config);
       expect(result).toBe("OK wrote new.txt");
-      expect(fs.read("new.txt")).toBe("content");
+      expect(fs.read("new.txt")).toEqual(["content"]);
     });
 
     it("should overwrite existing file", async () => {
-      fs.write("test.txt", "old");
+      fs.write("test.txt", ["old"]);
       await writeFileTool.execute({ path: "test.txt", content: "new" }, config);
-      expect(fs.read("test.txt")).toBe("new");
+      expect(fs.read("test.txt")).toEqual(["new"]);
     });
   });
 
   describe("replace_lines", () => {
     it("should replace a string in a file", async () => {
-      fs.write("test.txt", "Hello World\nThis is a test");
+      fs.write("test.txt", ["Hello World", "This is a test"]);
       const result = await replaceLinesTool.execute(
         {
           path: "test.txt",
@@ -104,11 +104,11 @@ describe("Tools", () => {
       );
 
       expect(result).toContain("OK edited");
-      expect(fs.read("test.txt")).toBe("Hello Vitest\nThis is a test");
+      expect(fs.read("test.txt")).toEqual(["Hello Vitest", "This is a test"]);
     });
 
     it("should be resilient to indentation (trimmed match)", async () => {
-      fs.write("test.ts", "function test() {\n  console.log('hi');\n}");
+      fs.write("test.ts", ["function test() {", "  console.log('hi');", "}"]);
       const result = await replaceLinesTool.execute(
         {
           path: "test.ts",
@@ -119,11 +119,11 @@ describe("Tools", () => {
       );
 
       expect(result).toContain("OK edited");
-      expect(fs.read("test.ts")).toBe("function test() {\n  console.log('hello');\n}");
+      expect(fs.read("test.ts")).toEqual(["function test() {", "  console.log('hello');", "}"]);
     });
 
     it("should return error if search string not found", async () => {
-      fs.write("test.txt", "Hello World");
+      fs.write("test.txt", ["Hello World"]);
       const result = await replaceLinesTool.execute(
         {
           path: "test.txt",
@@ -138,7 +138,7 @@ describe("Tools", () => {
 
   describe("append_lines", () => {
     it("should append to the end of a file when no search is provided", async () => {
-      fs.write("test.txt", "line 1");
+      fs.write("test.txt", ["line 1"]);
       const result = await appendLinesTool.execute(
         {
           path: "test.txt",
@@ -147,11 +147,11 @@ describe("Tools", () => {
         config,
       );
       expect(result).toContain("OK appended to end");
-      expect(fs.read("test.txt")).toBe("line 1\nline 2");
+      expect(fs.read("test.txt")).toEqual(["line 1", "line 2"]);
     });
 
     it("should append after a search string", async () => {
-      fs.write("test.txt", "start\nmiddle\nend");
+      fs.write("test.txt", ["start", "middle", "end"]);
       const result = await appendLinesTool.execute(
         {
           path: "test.txt",
@@ -161,11 +161,11 @@ describe("Tools", () => {
         config,
       );
       expect(result).toContain("OK appended content after match");
-      expect(fs.read("test.txt")).toBe("start\nmiddle\ninserted\nend");
+      expect(fs.read("test.txt")).toEqual(["start", "middle", "inserted", "end"]);
     });
 
     it("should return error if search string not found", async () => {
-      fs.write("test.txt", "hello");
+      fs.write("test.txt", ["hello"]);
       const result = await appendLinesTool.execute(
         {
           path: "test.txt",
@@ -180,7 +180,7 @@ describe("Tools", () => {
 
   describe("insert_lines", () => {
     it("should insert at the beginning when no search is provided", async () => {
-      fs.write("test.txt", "line 2");
+      fs.write("test.txt", ["line 2"]);
       const result = await insertLinesTool.execute(
         {
           path: "test.txt",
@@ -189,11 +189,11 @@ describe("Tools", () => {
         config,
       );
       expect(result).toContain("OK inserted at beginning");
-      expect(fs.read("test.txt")).toBe("line 1\nline 2");
+      expect(fs.read("test.txt")).toEqual(["line 1", "line 2"]);
     });
 
     it("should insert before a search string", async () => {
-      fs.write("test.txt", "start\nmiddle\nend");
+      fs.write("test.txt", ["start", "middle", "end"]);
       const result = await insertLinesTool.execute(
         {
           path: "test.txt",
@@ -203,11 +203,11 @@ describe("Tools", () => {
         config,
       );
       expect(result).toContain("OK inserted content before match");
-      expect(fs.read("test.txt")).toBe("start\ninserted\nmiddle\nend");
+      expect(fs.read("test.txt")).toEqual(["start", "inserted", "middle", "end"]);
     });
 
     it("should return error if search string not found", async () => {
-      fs.write("test.txt", "hello");
+      fs.write("test.txt", ["hello"]);
       const result = await insertLinesTool.execute(
         {
           path: "test.txt",
@@ -222,30 +222,30 @@ describe("Tools", () => {
 
   describe("delete_file", () => {
     it("should delete a file", async () => {
-      fs.write("delete-me.txt", "bye");
+      fs.write("delete-me.txt", ["bye"]);
       const result = await deleteFileTool.execute({ path: "delete-me.txt" }, config);
       expect(result).toBe("OK deleted delete-me.txt");
-      expect(() => fs.read("delete-me.txt")).toThrow();
+      expect(fs.has("delete-me.txt")).toBe(false);
     });
 
     it("should return error for non-existent file", async () => {
       const result = await deleteFileTool.execute({ path: "ghost.txt" }, config);
-      expect(result).toContain("ERR File not found");
+      expect(result).toContain("ERR Path not found");
     });
   });
 
   describe("move_file", () => {
     it("should move/rename a file", async () => {
-      fs.write("old.txt", "content");
+      fs.write("old.txt", ["content"]);
       const result = await moveFileTool.execute({ oldPath: "old.txt", newPath: "new.txt" }, config);
       expect(result).toBe("OK moved old.txt to new.txt");
-      expect(fs.read("new.txt")).toBe("content");
-      expect(() => fs.read("old.txt")).toThrow();
+      expect(fs.read("new.txt")).toEqual(["content"]);
+      expect(fs.has("old.txt")).toBe(false);
     });
 
     it("should return error if destination exists", async () => {
-      fs.write("f1.txt", "1");
-      fs.write("f2.txt", "2");
+      fs.write("f1.txt", ["1"]);
+      fs.write("f2.txt", ["2"]);
       const result = await moveFileTool.execute({ oldPath: "f1.txt", newPath: "f2.txt" }, config);
       expect(result).toContain("ERR Destination already exists");
     });
@@ -253,9 +253,9 @@ describe("Tools", () => {
 
   describe("search_files", () => {
     it("should find files containing the query", async () => {
-      fs.write("f1.txt", "apple pie");
-      fs.write("f2.txt", "banana cake");
-      fs.write("f3.txt", "apple tart");
+      fs.write("f1.txt", ["apple pie"]);
+      fs.write("f2.txt", ["banana cake"]);
+      fs.write("f3.txt", ["apple tart"]);
 
       const result = await searchFilesTool.execute({ query: "apple" }, config);
       expect(result).toContain("f1.txt");
@@ -264,7 +264,7 @@ describe("Tools", () => {
     });
 
     it("should return no results if query not found", async () => {
-      fs.write("f1.txt", "apple");
+      fs.write("f1.txt", ["apple"]);
       const result = await searchFilesTool.execute({ query: "orange" }, config);
       expect(result).toContain("OK search found no results");
     });
@@ -272,7 +272,7 @@ describe("Tools", () => {
 
   describe("open_file", () => {
     it("should open a file and return its content", async () => {
-      fs.write("open.txt", "hello open");
+      fs.write("open.txt", ["hello open"]);
       const result = await openFileTool.execute({ path: "open.txt" }, config, "call-1");
       expect(result).toContain("OK open open.txt\nhello open");
     });
@@ -283,18 +283,32 @@ describe("Tools", () => {
     });
 
     it("should return error for too large file", async () => {
-      fs.write("large.txt", "a".repeat(100001));
+      fs.write("large.txt", ["a".repeat(100001)]);
       const result = await openFileTool.execute({ path: "large.txt" }, config, "call-3");
       expect(result).toContain("ERR File large.txt is too large to open");
     });
 
     it("should update content when file changes", async () => {
-      fs.write("live.txt", "v1");
+      fs.write("live.txt", ["v1"]);
+
+      config.context.addMessage({
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "call-4", type: "function", function: { name: "test_tool", arguments: "{}" } },
+        ],
+      });
+
       const result = await openFileTool.execute({ path: "live.txt" }, config, "call-4");
+      config.context.addMessage({
+        role: "tool",
+        tool_call_id: "call-4",
+        content: result,
+      });
       expect(result).toContain("v1");
 
       // Simulate file change
-      fs.write("live.txt", "v2");
+      fs.write("live.txt", ["v2"]);
 
       const updatedResult = config.context.getToolResult("call-4");
       expect(updatedResult).toContain("v2");

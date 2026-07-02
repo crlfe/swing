@@ -27,7 +27,9 @@ const forgetTool: Tool = {
     }
 
     try {
-      context.removeToolCall(toolCallId);
+      if (!context.removeToolCall(toolCallId)) {
+        return `ERR Tool call not found`;
+      }
       return `OK forgotten tool call ${toolCallId}`;
     } catch (e: any) {
       return `ERR ${e.message}`;

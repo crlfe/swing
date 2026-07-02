@@ -1,4 +1,12 @@
-import { attachNode, detachNode, splitPath, walkDown } from "./trees.ts";
+import {
+  attachNode,
+  detachNode,
+  nodeFromObject,
+  nodeToObject,
+  type RecursiveRecord,
+  splitPath,
+  walkDown,
+} from "./trees.ts";
 import type { TreeDir, TreeNode } from "./types.ts";
 
 export type FileTreeListener = (path: string) => void;
@@ -12,16 +20,70 @@ export class FileTree {
   #root: TreeDir;
   #watchers: Map<string, Set<FileTreeWatch>> = new Map();
 
+  fromJSON(json: RecursiveRecord<string, string>): void {
+    this.#root = nodeFromObject(json);
+  }
+
+  toJSON(): RecursiveRecord<string, string> {
+    return nodeToObject(this.#root);
+  }
+
+  get size(): number {
+    let count = 0;
+    this.walk("", (path, node) => {
+      if (node.type === "blob") count++;
+    });
+    return count;
+  }
+
+  clear(): void {
+    this.#root = { type: "dir", children: new Map() };
+  }
+
   constructor(root?: TreeDir) {
     this.#root = root ?? { type: "dir", children: new Map() };
+  }
+
+  list(): string[] {
+    const result: string[] = [];
+    this.walk("", (path, node) => {
+      if (path) result.push(path);
+      return true;
+    });
+    return result.sort();
+  }
+
+  listWithDirectoriesFirst(): string[] {
+    const result: string[] = [];
+    const recurse = (path: string, node: TreeNode) => {
+      if (node.type === "dir") {
+        const children = Array.from(node.children.entries()).sort(([a], [b]) => a.localeCompare(b));
+
+        // Directories first, then blobs
+        const dirs = children.filter(([_, v]) => v.type === "dir");
+        const blobs = children.filter(([_, v]) => v.type === "blob");
+
+        for (const [name, child] of [...dirs, ...blobs]) {
+          const childPath = path ? `${path}/${name}` : name;
+          result.push(childPath + (child.type === "dir" ? "/" : ""));
+          if (child.type === "dir") recurse(childPath, child);
+        }
+      }
+    };
+    recurse("", this.#root);
+    return result;
   }
 
   getRoot() {
     return this.#root;
   }
 
-  getNode(path: string): TreeNode | undefined {
-    return walkDown(this.#root, splitPath(path))[1];
+  getNode(path: string): TreeNode {
+    const node = walkDown(this.#root, splitPath(path))[1];
+    if (!node) {
+      throw new Error("Path not found");
+    }
+    return node;
   }
 
   watch(
@@ -65,12 +127,42 @@ export class FileTree {
     }
   }
 
-  read(path: string): ReadonlyArray<string> | undefined {
-    const node = this.getNode(path);
-    if (node?.type === "dir") {
+  async walkAsync(
+    path: string,
+    callback: (path: string, node: TreeNode) => Promise<boolean | undefined | void>,
+  ): Promise<void> {
+    const parts = splitPath(path);
+    const node = walkDown(this.#root, parts)[1];
+    if (!node) {
+      throw new Error("Path not found");
+    }
+    await recurse(parts, node);
+
+    async function recurse(parts: string[], node: TreeNode) {
+      if (parts.length && (await callback(parts.join("/"), node)) === false) {
+        return;
+      }
+      if (node.type === "dir") {
+        for (const [name, child] of node.children) {
+          await recurse([...parts, name], child);
+        }
+      }
+    }
+  }
+
+  has(path: string): boolean {
+    return walkDown(this.#root, splitPath(path))[1] != undefined;
+  }
+
+  read(path: string): ReadonlyArray<string> {
+    const node = walkDown(this.#root, splitPath(path))[1];
+    if (!node) {
+      throw new Error("Path not found");
+    }
+    if (node.type === "dir") {
       throw new Error("Can not read a directory");
     }
-    return node?.content;
+    return node.content;
   }
 
   write(path: string, content: ReadonlyArray<string>): boolean {
@@ -97,22 +189,19 @@ export class FileTree {
     return true;
   }
 
-  delete(path: string, options?: { recursive?: boolean }): boolean {
+  delete(path: string, options?: { recursive?: boolean }): void {
     const parts = splitPath(path);
     const [newRoot, oldNode] = detachNode(this.#root, parts);
 
-    if (oldNode?.type === "dir" && oldNode.children.size && !options?.recursive) {
-      throw new Error("Directory not empty");
-    }
-
     if (!oldNode) {
-      // Nothing is changing.
-      return false;
+      throw new Error("Path not found");
+    }
+    if (oldNode.type === "dir" && oldNode.children.size && !options?.recursive) {
+      throw new Error("Directory not empty");
     }
 
     this.#root = newRoot;
     this.#notifyWatchers(path);
-    return true;
   }
 
   move(oldPath: string, newPath: string): void {

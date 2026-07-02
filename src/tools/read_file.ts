@@ -9,7 +9,8 @@ const readFileTool: Tool = {
     type: "function",
     function: {
       name: "read_file",
-      description: "Reads the content of a file",
+      description:
+        "Reads the content of a file. This is a one-time read and will not update if the file changes.",
       parameters: {
         type: "object",
         properties: {
@@ -29,10 +30,14 @@ const readFileTool: Tool = {
     }
     try {
       const content = fs.read(path);
-      if (content.length > 100000) {
-        return `ERR File ${path} is too large to read (${content.length} characters). Please use a more specific tool or request a partial read.`;
+      if (!content) {
+        return `ERR File not found: ${path}`;
       }
-      return `OK read ${path}\n${content}`;
+      const contentString = content.join("\n");
+      if (contentString.length > 100000) {
+        return `ERR File ${path} is too large to read (${contentString.length} characters). Please use a more specific tool or request a partial read.`;
+      }
+      return `OK read ${path}\n${contentString}`;
     } catch (e: any) {
       return `ERR ${e.message}`;
     }

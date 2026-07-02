@@ -1,5 +1,4 @@
 import { type ChatConfig } from "../chat.ts";
-import { type Files } from "../fs.ts";
 
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
@@ -17,11 +16,6 @@ export interface ToolFunctionDefinition {
 export interface ToolDefinition {
   type: "function";
   function: ToolFunctionDefinition;
-}
-
-export interface ToolOptions {
-  logInfo?: (msg: string) => void;
-  fs: Files;
 }
 
 export interface Tool {

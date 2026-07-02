@@ -10,7 +10,7 @@ const openFileTool: Tool = {
     function: {
       name: "open_file",
       description:
-        "Opens the content of a file. The content will automatically update when the file changes, so prefer this tool over read_file when you are going to be editing a file.",
+        "Opens a file and keeps it open. The content will automatically update in the chat history whenever the file is modified. Use this instead of read_file when you intend to make multiple edits to the same file to ensure you are always seeing the current state.",
       parameters: {
         type: "object",
         properties: {
@@ -30,32 +30,34 @@ const openFileTool: Tool = {
     }
     try {
       const content = fs.read(path);
-      if (content.length > 100000) {
-        return `ERR File ${path} is too large to open (${content.length} characters). Please use a more specific tool or request a partial read.`;
+      if (!content) {
+        return `ERR File ${path} was not found`;
+      }
+      const contentString = content.join("\n");
+      if (contentString.length > 100000) {
+        return `ERR File ${path} is too large to open (${contentString.length} characters). Please use a more specific tool or request a partial read.`;
       }
 
-      const result = `OK open ${path}\n${content}`;
-
-      const listener = (e: any) => {
-        const { detail } = e;
-        if (detail.path === path) {
+      const unsubscribe = fs.watch(
+        path,
+        (changedPath) => {
           try {
             const newContent = fs.read(path);
-            const newResult = `OK open ${path}\n${newContent}`;
+            const newContentString = newContent ? newContent.join("\n") : "";
+            const newResult = `OK open ${path}\n${newContentString}`;
             if (!context.updateToolResult(toolCallId, newResult)) {
-              fs.removeEventListener("change", listener);
+              unsubscribe();
             }
           } catch (e: any) {
             if (!context.updateToolResult(toolCallId, `ERR ${e.message}`)) {
-              fs.removeEventListener("change", listener);
+              unsubscribe();
             }
           }
-        }
-      };
+        },
+        { recursive: false },
+      );
 
-      fs.addEventListener("change", listener);
-
-      return result;
+      return `OK open ${path}\n${contentString}`;
     } catch (e: any) {
       return `ERR ${e.message}`;
     }

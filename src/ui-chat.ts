@@ -1,10 +1,10 @@
 import { sendMessageStream, getSystemPrompt } from "./chat.ts";
 import { type ChatConfig } from "./chat.ts";
 import { ChatContext } from "./chat/context.ts";
-import { type Files } from "./fs.ts";
+import type { FileTree } from "./data/file-tree.ts";
 import { h } from "./h.ts";
 
-export function renderChat(fs: Files): void {
+export function renderChat(fs: FileTree): void {
   const container = document.getElementById("chat-panel");
   if (!container) return;
 

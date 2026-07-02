@@ -1,6 +1,6 @@
 import type { ChatContext } from "./chat/context.ts";
 import type { Message, Tool, ToolCall } from "./chat/types.ts";
-import type { Files } from "./fs.ts";
+import type { FileTree } from "./data/file-tree.ts";
 import appendLinesTool from "./tools/append_lines.ts";
 import deleteFileTool from "./tools/delete_file.ts";
 import forgetTool from "./tools/forget.ts";
@@ -18,7 +18,7 @@ export interface ChatConfig {
   model: string;
   key: string;
   stream?: boolean;
-  fs: Files;
+  fs: FileTree;
   context: ChatContext;
 
   logText(msg: string): void;

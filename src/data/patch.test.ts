@@ -112,7 +112,7 @@ describe("patchLines", () => {
 
 describe("patchTree", () => {
   it("should apply a patch to a single file", () => {
-    const root = nodeFromObject({ "file.txt": "line 1\nline 2" }) as TreeDir;
+    const root = nodeFromObject({ "file.txt": "line 1\nline 2\n" }) as TreeDir;
     const patch: Patch = {
       files: [
         {
@@ -135,7 +135,7 @@ describe("patchTree", () => {
   });
 
   it("should move a file and patch its content", () => {
-    const root = nodeFromObject({ old: { "file.txt": "line 1\nline 2" } }) as TreeDir;
+    const root = nodeFromObject({ old: { "file.txt": "line 1\nline 2\n" } }) as TreeDir;
     const patch: Patch = {
       files: [
         {
@@ -181,7 +181,7 @@ describe("patchTree", () => {
     };
 
     const result = patchTree(root, patch);
-    expect(nodeToObject(result)).toEqual({ "a.txt": "a2\n", "b.txt": "b2\n" });
+    expect(nodeToObject(result)).toEqual({ "a.txt": "a2", "b.txt": "b2" });
   });
 
   it("should throw if a file does not exist in the tree", () => {
@@ -201,10 +201,10 @@ describe("patchTree", () => {
 
   it("should apply a complex patch with mixed additions, deletions, and modifications", () => {
     const root = nodeFromObject({
-      "README.md": "# Project\nOld description",
+      "README.md": "# Project\nOld description\n",
       src: {
-        "index.ts": "console.log('init');",
-        "utils.ts": "export const a = 1;",
+        "index.ts": "console.log('init');\n",
+        "utils.ts": "export const a = 1;\n",
       },
       "temp.log": "log line 1",
     }) as TreeDir;
@@ -237,7 +237,7 @@ describe("patchTree", () => {
           oldPath: "",
           newPath: "src/types.ts",
           hunks: [
-            { oldStart: 0, newStart: 0, oldLines: [], newLines: ["export type T = string;"] },
+            { oldStart: 0, newStart: 0, oldLines: [], newLines: ["export type T = string;", ""] },
           ],
         },
         {
@@ -248,7 +248,7 @@ describe("patchTree", () => {
         {
           oldPath: "",
           newPath: "docs/api.md",
-          hunks: [{ oldStart: 0, newStart: 0, oldLines: [], newLines: ["API Docs"] }],
+          hunks: [{ oldStart: 0, newStart: 0, oldLines: [], newLines: ["API Docs", ""] }],
         },
       ],
     };

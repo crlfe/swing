@@ -254,18 +254,18 @@ function expectIsDir(value: TreeNode | undefined): asserts value is TreeDir {
 
 describe("nodeToObject", () => {
   it("should convert a blob to a string with a trailing newline", () => {
-    const blob: TreeNode = { type: "blob", content: ["line 1", "line 2"] };
+    const blob: TreeNode = { type: "blob", content: ["line 1", "line 2", ""] };
     expect(nodeToObject(blob)).toBe("line 1\nline 2\n");
   });
 
-  it("should convert a single-line blob to a string with a trailing newline", () => {
+  it("should convert a single-line blob to a string without a trailing newline", () => {
     const blob: TreeNode = { type: "blob", content: ["hello"] };
-    expect(nodeToObject(blob)).toBe("hello\n");
+    expect(nodeToObject(blob)).toBe("hello");
   });
 
-  it("should convert an empty blob to a single newline", () => {
+  it("should convert an empty blob to an empty string", () => {
     const blob: TreeNode = { type: "blob", content: [] };
-    expect(nodeToObject(blob)).toBe("\n");
+    expect(nodeToObject(blob)).toBe("");
   });
 
   it("should convert a directory to an object", () => {
@@ -277,8 +277,8 @@ describe("nodeToObject", () => {
       ]),
     };
     expect(nodeToObject(root)).toEqual({
-      "file1.txt": "content1\n",
-      "file2.txt": "content2\n",
+      "file1.txt": "content1",
+      "file2.txt": "content2",
     });
   });
 
@@ -298,9 +298,9 @@ describe("nodeToObject", () => {
     };
     expect(nodeToObject(root)).toEqual({
       src: {
-        "index.ts": "import 'fs'\n",
+        "index.ts": "import 'fs'",
       },
-      "package.json": "{}\n",
+      "package.json": "{}",
     });
   });
 
@@ -325,16 +325,15 @@ describe("roundtrip", () => {
     const node = nodeFromObject(original);
     const result = nodeToObject(node);
 
-    // Note: nodeToObject adds a trailing newline to blobs
     const expected = {
-      "README.md": "Hello\nWorld\n",
+      "README.md": "Hello\nWorld",
       src: {
-        "main.ts": "console.log('hi')\n",
+        "main.ts": "console.log('hi')",
         lib: {
-          "util.ts": "export const a = 1\n",
+          "util.ts": "export const a = 1",
         },
       },
-      ".gitignore": "node_modules\n\n",
+      ".gitignore": "node_modules\n",
     };
     expect(result).toEqual(expected);
   });

@@ -19,7 +19,8 @@ export class ChatContext {
   }
 
   /** Removes any tool calls or results matching the given tool call ID. */
-  removeToolCall(toolCallId: string): void {
+  removeToolCall(toolCallId: string): boolean {
+    const length = this.messages.length;
     this.messages = this.messages.filter((message) => {
       if (message.tool_calls) {
         message.tool_calls = message.tool_calls.filter((call) => call.id !== toolCallId);
@@ -30,6 +31,7 @@ export class ChatContext {
       }
       return true;
     });
+    return this.messages.length < length;
   }
 
   /** Returns the result of a tool call by its ID. */

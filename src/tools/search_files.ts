@@ -33,7 +33,8 @@ const searchFilesTool: Tool = {
 
       for (const file of files) {
         const content = fs.read(file);
-        if (content.includes(query)) {
+        const contentString = content ? content.join("\n") : "";
+        if (contentString.includes(query)) {
           results.push(file);
         }
       }

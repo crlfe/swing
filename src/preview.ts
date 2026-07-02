@@ -1,15 +1,16 @@
+import type { FileTree } from "./data/file-tree.ts";
 import { type EditorView } from "./editor.ts";
-import { type Files } from "./fs.ts";
 
 export function refreshPreview(
   activeHtmlFile: string,
-  fs: Files,
+  fs: FileTree,
   views: Record<string, EditorView>,
 ): void {
   let htmlContent = "";
 
   try {
-    htmlContent = views[activeHtmlFile]?.state.doc.toString() || fs.read(activeHtmlFile);
+    htmlContent =
+      views[activeHtmlFile]?.state.doc.toString() || fs.read(activeHtmlFile)?.join("\n") || "";
   } catch {
     htmlContent = "<h1>No HTML file active</h1>";
   }
@@ -41,7 +42,7 @@ export function refreshPreview(
 let previewTimeout: number | undefined | any /* needed for Node compatibility */;
 export function debouncedRefreshPreview(
   activeHtmlFile: string,
-  fs: Files,
+  fs: FileTree,
   views: Record<string, EditorView>,
   delay = 300,
 ): void {

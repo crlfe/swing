@@ -32,7 +32,7 @@ const writeFileTool: Tool = {
       logInfo(`Writing file: ${path}`);
     }
     try {
-      fs.write(path, content);
+      fs.write(path, content.split(/\r?\n/));
 
       // Update editor view if open
       if ("document" in globalThis) {
