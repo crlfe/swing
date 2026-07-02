@@ -1,5 +1,5 @@
 import { arrayGet } from "../util.ts";
-import type { TreeDir, TreeNode } from "./types.ts";
+import type { TreeBlob, TreeDir, TreeNode } from "./types.ts";
 
 export function splitPath(path: string): string[] {
   const dst: string[] = [];
@@ -79,4 +79,35 @@ export function attachNode(
   }
 
   return [node, oldNode];
+}
+
+export type RecursiveRecord<K extends PropertyKey, V> = { [Key in K]: V | RecursiveRecord<K, V> };
+
+export function nodeFromObject(src: string): TreeBlob;
+export function nodeFromObject(src: RecursiveRecord<string, string>): TreeDir;
+export function nodeFromObject(src: string | RecursiveRecord<string, string>): TreeNode;
+export function nodeFromObject(src: string | RecursiveRecord<string, string>): TreeNode {
+  if (typeof src === "string") {
+    return { type: "blob", content: src.split("\n") };
+  } else if (typeof src === "object" && src !== null && !Array.isArray(src)) {
+    return {
+      type: "dir",
+      children: new Map(Object.entries(src).map(([k, v]) => [k, nodeFromObject(v)])),
+    };
+  } else {
+    throw new TypeError();
+  }
+}
+
+export function nodeToObject(src: TreeBlob): string;
+export function nodeToObject(src: TreeDir): RecursiveRecord<string, string>;
+export function nodeToObject(src: TreeNode): string | RecursiveRecord<string, string>;
+export function nodeToObject(src: TreeNode): string | RecursiveRecord<string, string> {
+  if (src.type === "blob") {
+    return src.content.join("\n") + "\n";
+  } else if (src.type === "dir") {
+    return Object.fromEntries(src.children.entries().map(([k, v]) => [k, nodeToObject(v)]));
+  } else {
+    throw new TypeError();
+  }
 }

@@ -1,28 +1,28 @@
 export interface TreeDir {
   readonly type: "dir";
-  readonly children: Map<string, TreeNode>;
+  readonly children: ReadonlyMap<string, TreeNode>;
 }
 
 export interface TreeBlob {
   readonly type: "blob";
-  readonly content: ReadonlyArray<string>;
+  readonly content: readonly string[];
 }
 
 export type TreeNode = TreeDir | TreeBlob;
 
 export interface Patch {
-  readonly files: PatchFile[];
+  readonly files: readonly PatchFile[];
 }
 
 export interface PatchFile {
   readonly oldPath: string;
   readonly newPath: string;
-  readonly hunks: PatchHunk[];
+  readonly hunks: readonly PatchHunk[];
 }
 
 export interface PatchHunk {
   readonly oldStart: number;
   readonly newStart: number;
-  readonly oldLines: string[];
-  readonly newLines: string[];
+  readonly oldLines: readonly string[];
+  readonly newLines: readonly string[];
 }

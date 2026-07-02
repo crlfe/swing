@@ -5,7 +5,10 @@ import type { PatchHunk } from "./types.ts";
  * Computes the difference between two arrays of lines using Myers' Diff Algorithm. This
  * implementation finds the Shortest Edit Script (SES).
  */
-export function diffLinesMyers(oldLines: string[], newLines: string[]): PatchHunk[] {
+export function diffLinesMyers(
+  oldLines: readonly string[],
+  newLines: readonly string[],
+): PatchHunk[] {
   let start = 0;
   while (
     start < oldLines.length &&
@@ -40,7 +43,7 @@ export function diffLinesMyers(oldLines: string[], newLines: string[]): PatchHun
   let y = 0;
 
   // Find the shortest edit script
-  for (let d = 0; d <= max; d++) {
+  outer: for (let d = 0; d <= max; d++) {
     trace.push(new Int32Array(v));
     for (let k = -d; k <= d; k += 2) {
       if (k === -d || (k !== d && arrayGet(v, max + k - 1) < arrayGet(v, max + k + 1))) {
@@ -57,26 +60,13 @@ export function diffLinesMyers(oldLines: string[], newLines: string[]): PatchHun
       v[max + k] = x;
 
       if (x >= n && y >= m) {
-        return backtrack(trace, oldLines, newLines, start, oldEnd, newEnd);
+        break outer;
       }
     }
   }
 
-  return backtrack(trace, oldLines, newLines, start, oldEnd, newEnd);
-}
-
-function backtrack(
-  trace: Int32Array[],
-  oldLines: string[],
-  newLines: string[],
-  start: number,
-  oldEnd: number,
-  newEnd: number,
-): PatchHunk[] {
-  const n = oldEnd - start;
-  const m = newEnd - start;
-  let x = n;
-  let y = m;
+  x = n;
+  y = m;
   const edits: { type: "old" | "new" | "same"; line: string }[] = [];
 
   for (let d = trace.length - 1; d >= 0; d--) {
