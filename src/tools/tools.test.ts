@@ -323,7 +323,7 @@ describe("Tools", () => {
 
     it("should return error if toolCallId is missing or invalid", async () => {
       const result = await forgetTool.execute({ toolCallId: "non-existent" }, config);
-      expect(result).toMatch(/OK forgotten|ERR/);
+      expect(result).toContain("ERR");
     });
   });
 });

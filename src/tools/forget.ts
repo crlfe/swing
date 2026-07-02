@@ -10,7 +10,7 @@ const forgetTool: Tool = {
     function: {
       name: "forget",
       description:
-        "Removes a previous tool call and its response from the conversation history. This is useful for managing context window size. For example, an agent can use read_file, extract and summarize the important details for later reference, and then call forget to remove the large file content from the history.",
+        "Removes a previous tool call and its response from the conversation history. This is useful when an old result is no longer needed. For example, an agent can use read_file, extract and summarize the important details for later reference, and then use forget to remove the large file content from the history.",
       parameters: {
         type: "object",
         properties: {
