@@ -98,6 +98,7 @@ export function renderChat(fs: Files): void {
         key: (document.getElementById("chat-key") as HTMLInputElement)?.value || "unspecified",
         stream: true,
         fs,
+        context,
         logInfo(msg: string) {
           log(msg + "\n");
         },
@@ -108,13 +109,13 @@ export function renderChat(fs: Files): void {
 
       appendMessage("User", text);
       input.value = "";
-      context.addMessage({ role: "user", content: text });
+      config.context.addMessage({ role: "user", content: text });
 
       const aiMsgDiv = appendMessage("AI", "");
       let fullResponse = "";
 
       try {
-        await sendMessageStream(context, config);
+        await sendMessageStream(config);
       } catch (e) {
         updateMessageContent(
           aiMsgDiv,

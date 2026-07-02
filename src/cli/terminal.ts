@@ -90,6 +90,7 @@ async function run() {
     key: chatKey,
     stream: true,
     fs: new Files(),
+    context: new ChatContext(),
 
     logText(msg: string) {
       process.stdout.write(msg);
@@ -106,8 +107,7 @@ async function run() {
   }
 
   const systemPrompt = "You are a helpful AI assistant. Be concise and professional.";
-  const context = new ChatContext();
-  context.addMessage({ role: "system", content: systemPrompt });
+  config.context.addMessage({ role: "system", content: systemPrompt });
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -160,10 +160,10 @@ async function run() {
       continue;
     }
 
-    context.addMessage({ role: "user", content: userInput });
+    config.context.addMessage({ role: "user", content: userInput });
 
     try {
-      await sendMessageStream(context, config);
+      await sendMessageStream(config);
     } catch (e) {
       console.error("\nChat error:", e);
     }

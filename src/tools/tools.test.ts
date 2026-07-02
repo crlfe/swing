@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { ChatConfig } from "../chat.ts";
+import { ChatContext } from "../chat/context.ts";
 import { Files } from "../fs.ts";
 import appendLinesTool from "./append_lines.ts";
 import deleteFileTool from "./delete_file.ts";
+import forgetTool from "./forget.ts";
 import insertLinesTool from "./insert_lines.ts";
 import listFilesTool from "./list_files.ts";
 import moveFileTool from "./move_file.ts";
+import openFileTool from "./open_file.ts";
 import readFileTool from "./read_file.ts";
 import replaceLinesTool from "./replace_lines.ts";
 import searchFilesTool from "./search_files.ts";
@@ -23,6 +26,7 @@ describe("Tools", () => {
       key: "",
 
       fs: new Files(),
+      context: new ChatContext(),
       logText(_: string) {},
       logInfo(_: string) {},
     };
@@ -263,6 +267,63 @@ describe("Tools", () => {
       fs.write("f1.txt", "apple");
       const result = await searchFilesTool.execute({ query: "orange" }, config);
       expect(result).toContain("OK search found no results");
+    });
+  });
+
+  describe("open_file", () => {
+    it("should open a file and return its content", async () => {
+      fs.write("open.txt", "hello open");
+      const result = await openFileTool.execute({ path: "open.txt" }, config, "call-1");
+      expect(result).toContain("OK open open.txt\nhello open");
+    });
+
+    it("should return error for non-existent file", async () => {
+      const result = await openFileTool.execute({ path: "ghost.txt" }, config, "call-2");
+      expect(result).toContain("ERR");
+    });
+
+    it("should return error for too large file", async () => {
+      fs.write("large.txt", "a".repeat(100001));
+      const result = await openFileTool.execute({ path: "large.txt" }, config, "call-3");
+      expect(result).toContain("ERR File large.txt is too large to open");
+    });
+
+    it("should update content when file changes", async () => {
+      fs.write("live.txt", "v1");
+      const result = await openFileTool.execute({ path: "live.txt" }, config, "call-4");
+      expect(result).toContain("v1");
+
+      // Simulate file change
+      fs.write("live.txt", "v2");
+
+      const updatedResult = config.context.getToolResult("call-4");
+      expect(updatedResult).toContain("v2");
+    });
+  });
+
+  describe("forget", () => {
+    it("should remove a tool call from context", async () => {
+      config.context.addMessage({
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "call-99", type: "function", function: { name: "test_tool", arguments: "{}" } },
+        ],
+      });
+      config.context.addMessage({
+        role: "tool",
+        tool_call_id: "call-99",
+        content: "test result",
+      });
+
+      const result = await forgetTool.execute({ toolCallId: "call-99" }, config);
+      expect(result).toBe("OK forgotten tool call call-99");
+      expect(config.context.getToolResult("call-99")).toBeUndefined();
+    });
+
+    it("should return error if toolCallId is missing or invalid", async () => {
+      const result = await forgetTool.execute({ toolCallId: "non-existent" }, config);
+      expect(result).toMatch(/OK forgotten|ERR/);
     });
   });
 });

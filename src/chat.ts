@@ -3,9 +3,11 @@ import type { Message, Tool, ToolCall } from "./chat/types.ts";
 import type { Files } from "./fs.ts";
 import appendLinesTool from "./tools/append_lines.ts";
 import deleteFileTool from "./tools/delete_file.ts";
+import forgetTool from "./tools/forget.ts";
 import insertLinesTool from "./tools/insert_lines.ts";
 import listFilesTool from "./tools/list_files.ts";
 import moveFileTool from "./tools/move_file.ts";
+import openFileTool from "./tools/open_file.ts";
 import readFileTool from "./tools/read_file.ts";
 import replaceLinesTool from "./tools/replace_lines.ts";
 import searchFilesTool from "./tools/search_files.ts";
@@ -17,6 +19,7 @@ export interface ChatConfig {
   key: string;
   stream?: boolean;
   fs: Files;
+  context: ChatContext;
 
   logText(msg: string): void;
   logInfo(msg: string): void;
@@ -24,6 +27,7 @@ export interface ChatConfig {
 
 const toolRegistry: Record<string, Tool> = {
   [listFilesTool.definition.function.name]: listFilesTool,
+  [openFileTool.definition.function.name]: openFileTool,
   [readFileTool.definition.function.name]: readFileTool,
   [searchFilesTool.definition.function.name]: searchFilesTool,
   [replaceLinesTool.definition.function.name]: replaceLinesTool,
@@ -32,6 +36,7 @@ const toolRegistry: Record<string, Tool> = {
   [writeFileTool.definition.function.name]: writeFileTool,
   [moveFileTool.definition.function.name]: moveFileTool,
   [deleteFileTool.definition.function.name]: deleteFileTool,
+  [forgetTool.definition.function.name]: forgetTool,
 };
 
 const tools = Object.values(toolRegistry).map((t) => t.definition);
@@ -44,7 +49,7 @@ async function executeTools(toolCalls: ToolCall[], config: ChatConfig): Promise<
       throw new Error(`Unknown tool: ${toolCall.function.name}`);
     }
     const args = JSON.parse(toolCall.function.arguments);
-    const result = await tool.execute(args, config);
+    const result = await tool.execute(args, config, toolCall.id);
     toolResults.push({
       role: "tool",
       tool_call_id: toolCall.id,
@@ -54,11 +59,11 @@ async function executeTools(toolCalls: ToolCall[], config: ChatConfig): Promise<
   return toolResults;
 }
 
-export async function sendMessageStream(context: ChatContext, config: ChatConfig) {
+export async function sendMessageStream(config: ChatConfig) {
   const streamEnabled = config.stream !== false;
 
   while (true) {
-    const currentMessages = context.getMessages();
+    const currentMessages = config.context.getMessages();
     const requestBody = {
       model: config.model,
       messages: currentMessages,
@@ -97,13 +102,13 @@ export async function sendMessageStream(context: ChatContext, config: ChatConfig
 
       if (message.tool_calls && message.tool_calls.length > 0) {
         const toolResults = await executeTools(message.tool_calls, config);
-        context.addMessage(message);
+        config.context.addMessage(message);
         for (const res of toolResults) {
-          context.addMessage(res);
+          config.context.addMessage(res);
         }
         // Continue to next iteration of the while loop
       } else {
-        context.addMessage(message);
+        config.context.addMessage(message);
         if (message.content) config.logText(message.content);
         break;
       }
@@ -166,14 +171,14 @@ export async function sendMessageStream(context: ChatContext, config: ChatConfig
       }
 
       if (!accumulatedMessage.tool_calls?.length) {
-        context.addMessage(accumulatedMessage);
+        config.context.addMessage(accumulatedMessage);
         break;
       }
 
       const toolResults = await executeTools(accumulatedMessage.tool_calls, config);
-      context.addMessage(accumulatedMessage);
+      config.context.addMessage(accumulatedMessage);
       for (const res of toolResults) {
-        context.addMessage(res);
+        config.context.addMessage(res);
       }
     }
   }

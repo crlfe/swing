@@ -26,7 +26,7 @@ export interface ToolOptions {
 
 export interface Tool {
   definition: ToolDefinition;
-  execute(args: any, options: ChatConfig): Promise<string>;
+  execute(args: any, options: ChatConfig, toolCallId?: string): Promise<string>;
 }
 
 export interface ToolCall {
