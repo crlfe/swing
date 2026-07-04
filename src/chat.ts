@@ -1,5 +1,5 @@
 import type { ChatContext } from "./chat/context.ts";
-import type { Message, Tool, ToolCall } from "./chat/types.ts";
+import type { Message, ToolCall } from "./chat/types.ts";
 import type { FileTree } from "./data/file-tree.ts";
 import appendLinesTool from "./tools/append_lines.ts";
 import deleteFileTool from "./tools/delete_file.ts";
@@ -11,6 +11,7 @@ import openFileTool from "./tools/open_file.ts";
 import readFileTool from "./tools/read_file.ts";
 import replaceLinesTool from "./tools/replace_lines.ts";
 import searchFilesTool from "./tools/search_files.ts";
+import type { Tool } from "./tools/types.ts";
 import writeFileTool from "./tools/write_file.ts";
 
 export interface ChatConfig {

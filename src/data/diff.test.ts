@@ -149,22 +149,22 @@ describe("diffTree", () => {
           ],
         },
         {
+          oldPath: "",
+          newPath: "docs/api.md",
+          hunks: [
+            {
+              oldLines: [],
+              newLines: ["API Docs"],
+            },
+          ],
+        },
+        {
           oldPath: "src/index.ts",
           newPath: "src/index.ts",
           hunks: [
             {
               oldLines: [],
               newLines: ["console.log('start');"],
-            },
-          ],
-        },
-        {
-          oldPath: "src/utils.ts",
-          newPath: "",
-          hunks: [
-            {
-              oldLines: ["export const a = 1;"],
-              newLines: [],
             },
           ],
         },
@@ -179,22 +179,22 @@ describe("diffTree", () => {
           ],
         },
         {
+          oldPath: "src/utils.ts",
+          newPath: "",
+          hunks: [
+            {
+              oldLines: ["export const a = 1;"],
+              newLines: [],
+            },
+          ],
+        },
+        {
           oldPath: "temp.log",
           newPath: "",
           hunks: [
             {
               oldLines: ["log line 1"],
               newLines: [],
-            },
-          ],
-        },
-        {
-          oldPath: "",
-          newPath: "docs/api.md",
-          hunks: [
-            {
-              oldLines: [],
-              newLines: ["API Docs"],
             },
           ],
         },

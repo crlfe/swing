@@ -5,17 +5,24 @@ export function diffTree(oldTree: TreeDir, newTree: TreeDir): Patch {
   const files: PatchFile[] = [];
 
   function walk(oldDir: TreeDir | undefined, newDir: TreeDir | undefined, path: string) {
+    if (oldDir === newDir) return;
+
     const oldChildren = oldDir?.children;
     const newChildren = newDir?.children;
 
-    const allKeys = new Set([
-      ...(oldChildren ? Array.from(oldChildren.keys()) : []),
-      ...(newChildren ? Array.from(newChildren.keys()) : []),
-    ]);
+    const allKeys = Array.from(
+      new Set([
+        ...(oldChildren ? Array.from(oldChildren.keys()) : []),
+        ...(newChildren ? Array.from(newChildren.keys()) : []),
+      ]),
+    );
+    allKeys.sort();
 
     for (const key of allKeys) {
       const oldNode = oldChildren?.get(key);
       const newNode = newChildren?.get(key);
+      if (oldNode === newNode) continue;
+
       const currentPath = path ? `${path}/${key}` : key;
 
       if (oldNode?.type === "dir") {

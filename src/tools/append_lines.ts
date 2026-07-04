@@ -1,4 +1,4 @@
-import { type Tool } from "../chat/types.ts";
+import { type Tool } from "./types.ts";
 
 interface AppendInsertArgs {
   path: string;

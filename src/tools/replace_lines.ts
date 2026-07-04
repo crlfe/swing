@@ -1,5 +1,5 @@
-import { type Tool } from "../chat/types.ts";
 import { arrayGet } from "../util.ts";
+import { type Tool } from "./types.ts";
 
 interface ReplaceLinesArgs {
   path: string;

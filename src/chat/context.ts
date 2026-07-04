@@ -1,14 +1,23 @@
 import type { Message } from "./types.ts";
 
+/** Manages the state and history of a chat conversation. */
 export class ChatContext {
   private messages: Message[] = [];
 
-  /** Adds a message to the conversation history. */
+  /**
+   * Adds a message to the conversation history.
+   *
+   * @param message - The message to add.
+   */
   addMessage(message: Message): void {
     this.messages.push(message);
   }
 
-  /** Returns the current history of messages. */
+  /**
+   * Returns a copy of the current history of messages.
+   *
+   * @returns An array of messages in the conversation.
+   */
   getMessages(): Message[] {
     return [...this.messages];
   }
@@ -18,7 +27,12 @@ export class ChatContext {
     this.messages = [];
   }
 
-  /** Removes any tool calls or results matching the given tool call ID. */
+  /**
+   * Removes any tool calls or results matching the given tool call ID.
+   *
+   * @param toolCallId - The ID of the tool call to remove.
+   * @returns True if any messages or tool calls were removed, false otherwise.
+   */
   removeToolCall(toolCallId: string): boolean {
     const length = this.messages.length;
     this.messages = this.messages.filter((message) => {
@@ -34,17 +48,24 @@ export class ChatContext {
     return this.messages.length < length;
   }
 
-  /** Returns the result of a tool call by its ID. */
+  /**
+   * Returns the result of a tool call by its ID.
+   *
+   * @param toolCallId - The ID of the tool call.
+   * @returns The content of the tool result message, or undefined if not found.
+   */
   getToolResult(toolCallId: string): string | undefined {
     const message = this.messages.find((m) => m.tool_call_id === toolCallId);
     return message?.content;
   }
 
   /**
-   * Removes all messages with the given tool call ID and appends a new result message. Returns
-   * false if the tool call was not found.
+   * Removes all messages with the given tool call ID and appends a new result message.
+   *
+   * @param toolCallId - The ID of the tool call to update.
+   * @param content - The new result content.
+   * @returns True if the tool call was found and updated, false otherwise.
    */
-
   updateToolResult(toolCallId: string, content: string): boolean {
     const exists = this.messages.some((m) => m.tool_call_id === toolCallId);
     if (!exists) {
