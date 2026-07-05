@@ -47,6 +47,7 @@ export function renderChat(fs: FileTree): void {
     h("div", { class: "chat-input-area" }, [
       h("textarea", { id: "chat-input", placeholder: "Ask something..." }),
       h("button", { id: "chat-send-btn" }, ["Send"]),
+      h("button", { id: "chat-abort-btn", disabled: true }, ["Stop"]),
     ]),
   ]);
 
@@ -73,56 +74,106 @@ export function renderChat(fs: FileTree): void {
   }
 
   const sendBtn = document.getElementById("chat-send-btn") as HTMLButtonElement | null;
+  const abortBtn = document.getElementById("chat-abort-btn") as HTMLButtonElement | null;
   const input = document.getElementById("chat-input") as HTMLTextAreaElement | null;
 
   const context = new ChatContext();
   context.addMessage({ role: "system", content: getSystemPrompt() });
 
-  if (sendBtn && input) {
+  if (sendBtn && input && abortBtn) {
     sendBtn.onclick = async () => {
       const text = input.value.trim();
       if (!text) return;
 
-      function log(msg: string) {
-        fullResponse += msg;
-        updateMessageContent(aiMsgDiv, "AI", fullResponse);
+      let logElements: HTMLElement[] = [];
+      let lastLog: HTMLElement | undefined;
+      let lastLogType: "info" | "text" | "think" | "user" | null = null;
+
+      const aiMsgDiv = h(
+        "div",
+        {
+          style: { marginBottom: "10px", whiteSpace: "pre-wrap" },
+        },
+        [],
+      );
+
+      const messagesContainer = document.getElementById("chat-messages");
+      if (messagesContainer) {
+        messagesContainer.appendChild(aiMsgDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+
+      function log(msg: string, type: "info" | "text" | "think" | "user") {
+        if (lastLog && lastLogType === type) {
+          lastLog.textContent += msg;
+        } else {
+          const prefix = type === "user" ? "User: " : "";
+          lastLog = h("div", { class: `log-type-${type}` }, [prefix + msg]);
+          logElements.push(lastLog);
+        }
+        lastLogType = type;
+
+        updateMessageContent(aiMsgDiv, logElements);
         const messagesContainer = document.getElementById("chat-messages");
         if (messagesContainer) {
           messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
       }
 
+      const controller = new AbortController();
       const config: ChatConfig = {
         url: (document.getElementById("chat-url") as HTMLInputElement)?.value || "",
         model: (document.getElementById("chat-model") as HTMLInputElement)?.value || "",
         key: (document.getElementById("chat-key") as HTMLInputElement)?.value || "unspecified",
         stream: true,
+        think: true,
         fs,
         context,
+        abortController: controller,
         logInfo(msg: string) {
-          log(msg + "\n");
+          log(msg, "info");
         },
         logText(msg: string) {
-          log(msg);
+          log(msg, "text");
+        },
+        logThink(msg: string) {
+          log(msg, "think");
         },
       };
 
-      appendMessage("User", text);
+      log(text, "user");
       input.value = "";
       config.context.addMessage({ role: "user", content: text });
 
-      const aiMsgDiv = appendMessage("AI", "");
-      let fullResponse = "";
+      updateMessageContent(aiMsgDiv, []);
+
+      sendBtn.disabled = true;
+      abortBtn.disabled = false;
+
+      abortBtn.onclick = () => {
+        controller.abort();
+      };
 
       try {
         await sendMessageStream(config);
-      } catch (e) {
-        updateMessageContent(
-          aiMsgDiv,
-          "AI",
-          `Error: ${e instanceof Error ? e.message : String(e)}`,
-          true,
-        );
+      } catch (e: any) {
+        if (e.name === "AbortError") {
+          if (logElements.length === 0) {
+            updateMessageContent(aiMsgDiv, `Request aborted by user.`, false);
+          } else {
+            log(" Request aborted by user.", "info");
+          }
+        } else {
+          updateMessageContent(
+            aiMsgDiv,
+            `Error: ${e instanceof Error ? e.message : String(e)}`,
+            true,
+          );
+        }
+      } finally {
+        sendBtn.disabled = false;
+        abortBtn.disabled = true;
+        abortBtn.onclick = null;
       }
     };
 
@@ -137,32 +188,16 @@ export function renderChat(fs: FileTree): void {
 
 function updateMessageContent(
   msgDiv: HTMLElement,
-  sender: string,
-  text: string,
+  content: string | HTMLElement[],
   isError = false,
 ): void {
-  msgDiv.replaceChildren(
-    h("strong", { style: { color: "#666" } }, [`${sender}:`]),
-    " ",
-    h("span", { style: isError ? { color: "red" } : {} }, [text]),
-  );
-}
-
-function appendMessage(sender: string, text: string): HTMLElement {
-  const messagesContainer = document.getElementById("chat-messages");
-  const msgDiv = h(
-    "div",
-    {
-      style: { marginBottom: "10px", whiteSpace: "pre-wrap" },
-    },
-    [],
-  );
-
-  updateMessageContent(msgDiv, sender, text);
-
-  if (messagesContainer) {
-    messagesContainer.appendChild(msgDiv);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  const contentEl = document.createElement("span");
+  if (Array.isArray(content)) {
+    content.forEach((el) => contentEl.appendChild(el));
+  } else {
+    contentEl.textContent = content;
+    if (isError) contentEl.style.color = "red";
   }
-  return msgDiv;
+
+  msgDiv.replaceChildren(contentEl);
 }

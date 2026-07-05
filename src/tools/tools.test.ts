@@ -29,6 +29,7 @@ describe("Tools", () => {
       context: new ChatContext(),
       logText(_: string) {},
       logInfo(_: string) {},
+      logThink(_: string) {},
     };
     fs = config.fs;
   });

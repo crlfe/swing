@@ -1,5 +1,5 @@
 import type { ChatContext } from "./chat/context.ts";
-import type { Message, ToolCall } from "./chat/types.ts";
+import type { ChatCompletionChunk, Message, ToolCall } from "./chat/types.ts";
 import type { FileTree } from "./data/file-tree.ts";
 import appendLinesTool from "./tools/append_lines.ts";
 import deleteFileTool from "./tools/delete_file.ts";
@@ -19,11 +19,14 @@ export interface ChatConfig {
   model: string;
   key: string;
   stream?: boolean;
+  think?: boolean;
   fs: FileTree;
   context: ChatContext;
+  abortController?: AbortController;
 
   logText(msg: string): void;
   logInfo(msg: string): void;
+  logThink(msg: string): void;
 }
 
 const toolRegistry: Record<string, Tool> = {
@@ -68,8 +71,8 @@ export async function sendMessageStream(config: ChatConfig) {
     const requestBody = {
       model: config.model,
       messages: currentMessages,
-      temperature: 0.7,
       stream: streamEnabled,
+      think: config.think ? config.think : false,
       tools: tools,
     };
 
@@ -82,6 +85,7 @@ export async function sendMessageStream(config: ChatConfig) {
           ...(config.key ? { Authorization: `Bearer ${config.key}` } : {}),
         },
         body: JSON.stringify(requestBody),
+        signal: config.abortController?.signal,
       });
     } catch (e) {
       if (e instanceof TypeError && e.message === "Failed to fetch") {
@@ -120,7 +124,12 @@ export async function sendMessageStream(config: ChatConfig) {
 
       const decoder = new TextDecoder();
       let buffer = "";
-      let accumulatedMessage: Message = { role: "assistant", content: "", tool_calls: [] };
+      let accumulatedMessage: Message = {
+        role: "assistant",
+        content: "",
+        reasoning_content: "",
+        tool_calls: [],
+      };
 
       while (true) {
         const { value, done } = await reader.read();
@@ -136,20 +145,27 @@ export async function sendMessageStream(config: ChatConfig) {
 
           if (trimmed.startsWith("data: ")) {
             try {
-              const json = JSON.parse(trimmed.substring(6));
+              const json = JSON.parse(trimmed.substring(6)) as ChatCompletionChunk;
               const delta = json.choices[0]?.delta;
               if (!delta) continue;
 
               if (delta.content) {
                 accumulatedMessage.content += delta.content;
-                if (delta.content) config.logText(delta.content);
+                config.logText(delta.content);
+              }
+
+              if (delta.reasoning_content) {
+                accumulatedMessage.reasoning_content += delta.reasoning_content;
+                config.logThink(delta.reasoning_content);
               }
 
               if (delta.tool_calls) {
                 for (const tcDelta of delta.tool_calls) {
                   const index = tcDelta.index;
-                  if (!accumulatedMessage.tool_calls?.[index]) {
-                    accumulatedMessage.tool_calls = accumulatedMessage.tool_calls || [];
+                  if (index == undefined) continue;
+
+                  accumulatedMessage.tool_calls = accumulatedMessage.tool_calls || [];
+                  if (!accumulatedMessage.tool_calls[index]) {
                     accumulatedMessage.tool_calls[index] = {
                       id: "",
                       type: "function",

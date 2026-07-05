@@ -77,19 +77,37 @@ async function run() {
     process.exit(1);
   }
 
+  let lastLogType: "text" | "info" | "think" | undefined;
+
   const config: ChatConfig = {
     url: chatUrl.replace(/\/?$/, "/chat/completions"),
     model: chatModel,
     key: chatKey,
     stream: true,
+    think: true,
     fs: await loadFiles(process.cwd()),
     context: new ChatContext(),
 
     logText(msg: string) {
+      if (lastLogType && lastLogType !== "text") {
+        process.stdout.write("\n\n");
+      }
+      lastLogType = "text";
       process.stdout.write(msg);
     },
     logInfo(msg: string) {
-      process.stderr.write(msg + "\n");
+      if (lastLogType && lastLogType !== "info") {
+        process.stdout.write("\n\n");
+      }
+      lastLogType = "info";
+      process.stdout.write(msg + "\n");
+    },
+    logThink(msg: string) {
+      if (lastLogType && lastLogType !== "think") {
+        process.stdout.write("\n\n");
+      }
+      lastLogType = "think";
+      process.stdout.write(`\x1b[2m${msg}\x1b[0m`);
     },
   };
 

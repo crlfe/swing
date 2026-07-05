@@ -196,7 +196,8 @@ body.preview-collapsed #main-content {
   display: flex;
   flex-direction: column;
   height: 100%;
-  flex-grow: 1;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 .chat-content {
   font-family: monospace;
@@ -286,4 +287,28 @@ body.preview-collapsed #main-content {
 }
 #chat-save-config:hover {
   background: #ddd;
+}
+
+/* Chat Log Type Styling */
+.log-type-think {
+  color: #888;
+  font-style: italic;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.log-type-info {
+  color: #0056b3;
+  font-weight: bold;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.log-type-text {
+  color: #333;
+  margin: 8px 0;
+}
+
+.log-type-user {
+  color: #333;
+  font-weight: bold;
+  margin: 8px 0;
 }
