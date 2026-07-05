@@ -26,14 +26,10 @@ const forgetTool: Tool = {
       throw new Error("Argument 'toolCallId' must be a string");
     }
 
-    try {
-      if (!context.removeToolCall(toolCallId)) {
-        return `ERR Tool call not found`;
-      }
-      return `OK forgotten tool call ${toolCallId}`;
-    } catch (e: any) {
-      return `ERR ${e.message}`;
+    if (!context.removeToolCall(toolCallId)) {
+      throw new Error(`Tool call not found`);
     }
+    return `forgotten tool call ${toolCallId}`;
   },
 };
 

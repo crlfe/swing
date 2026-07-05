@@ -36,54 +36,51 @@ const insertLinesTool: Tool = {
     if (logInfo) {
       logInfo(`Inserting lines in: ${path}`);
     }
-    try {
-      const fileLines = fs.read(path);
-      if (!fileLines) {
-        return `ERR File not found: ${path}`;
-      }
-      const insertLines = content.split(/\r?\n/);
 
-      if (!search) {
-        const newLines = [...insertLines, ...fileLines];
-        fs.write(path, newLines);
-        return `OK inserted at beginning of ${path}`;
-      }
+    const fileLines = fs.read(path);
+    if (!fileLines) {
+      throw new Error(`File not found: ${path}`);
+    }
+    const insertLines = content.split(/\r?\n/);
 
-      const searchLines = search
-        .split(/\r?\n/)
-        .filter((line) => line.trim() !== "" || search.includes("\n"));
-      const trimmedSearchLines = searchLines.map((l) => l.trim());
+    if (!search) {
+      const newLines = [...insertLines, ...fileLines];
+      fs.write(path, newLines);
+      return `inserted at beginning of ${path}`;
+    }
 
-      let matchStartIndex = -1;
-      for (let i = 0; i <= fileLines.length - searchLines.length; i++) {
-        let match = true;
-        for (let j = 0; j < searchLines.length; j++) {
-          if (fileLines[i + j]?.trim() !== trimmedSearchLines[j]) {
-            match = false;
-            break;
-          }
-        }
-        if (match) {
-          matchStartIndex = i;
+    const searchLines = search
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== "" || search.includes("\n"));
+    const trimmedSearchLines = searchLines.map((l) => l.trim());
+
+    let matchStartIndex = -1;
+    for (let i = 0; i <= fileLines.length - searchLines.length; i++) {
+      let match = true;
+      for (let j = 0; j < searchLines.length; j++) {
+        if (fileLines[i + j]?.trim() !== trimmedSearchLines[j]) {
+          match = false;
           break;
         }
       }
-
-      if (matchStartIndex === -1) {
-        return `ERR Search string not found in file ${path}`;
+      if (match) {
+        matchStartIndex = i;
+        break;
       }
-
-      const newLines = [
-        ...fileLines.slice(0, matchStartIndex),
-        ...insertLines,
-        ...fileLines.slice(matchStartIndex),
-      ];
-
-      fs.write(path, newLines);
-      return `OK inserted content before match in ${path}`;
-    } catch (e: any) {
-      return `ERR ${e.message}`;
     }
+
+    if (matchStartIndex === -1) {
+      throw new Error(`Search string not found in file ${path}`);
+    }
+
+    const newLines = [
+      ...fileLines.slice(0, matchStartIndex),
+      ...insertLines,
+      ...fileLines.slice(matchStartIndex),
+    ];
+
+    fs.write(path, newLines);
+    return `inserted content before match in ${path}`;
   },
 };
 

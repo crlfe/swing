@@ -25,30 +25,26 @@ const listFilesTool: Tool = {
     if (logInfo) {
       logInfo(`Listing files: ${args.path}`);
     }
-    try {
-      const normalizedPath = args.path.replace(/^\//, "");
-      const startNode = fs.getNode(normalizedPath);
-      if (!startNode) {
-        return `ERR Path not found: ${args.path}`;
-      }
+    const normalizedPath = args.path.replace(/^\//, "");
+    const startNode = fs.getNode(normalizedPath);
+    if (!startNode) {
+      throw new Error(`Path not found: ${args.path}`);
+    }
 
-      if (startNode.type !== "dir") {
-        return `ERR Path is not a directory: ${args.path}`;
-      }
+    if (startNode.type !== "dir") {
+      throw new Error(`Path is not a directory: ${args.path}`);
+    }
 
-      const children = Array.from(startNode.children.entries()).map(
-        ([name, child]: [string, any]) => {
-          return child.type === "dir" ? `${name}/` : name;
-        },
-      );
+    const children = Array.from(startNode.children.entries()).map(
+      ([name, child]: [string, any]) => {
+        return child.type === "dir" ? `${name}/` : name;
+      },
+    );
 
-      if (!children.length) {
-        return `OK listed empty directory ${args.path}`;
-      } else {
-        return `OK listed ${args.path}\n${children.join("\n")}\n`;
-      }
-    } catch (e: any) {
-      return `ERR ${e.message}`;
+    if (!children.length) {
+      return `listed empty directory ${args.path}`;
+    } else {
+      return `listed ${args.path}\n${children.join("\n")}\n`;
     }
   },
 };

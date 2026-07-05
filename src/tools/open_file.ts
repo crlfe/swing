@@ -28,39 +28,38 @@ const openFileTool: Tool = {
     if (logInfo) {
       logInfo(`Opening file: ${path}`);
     }
-    try {
-      const content = fs.read(path);
-      if (!content) {
-        return `ERR File ${path} was not found`;
-      }
-      const contentString = content.join("\n");
-      if (contentString.length > 100000) {
-        return `ERR File ${path} is too large to open (${contentString.length} characters). Please use a more specific tool or request a partial read.`;
-      }
 
-      const unsubscribe = fs.watch(
-        path,
-        (changedPath) => {
-          try {
-            const newContent = fs.read(path);
-            const newContentString = newContent ? newContent.join("\n") : "";
-            const newResult = `OK open ${path}\n${newContentString}`;
-            if (!context.updateToolResult(toolCallId, newResult)) {
-              unsubscribe();
-            }
-          } catch (e: any) {
-            if (!context.updateToolResult(toolCallId, `ERR ${e.message}`)) {
-              unsubscribe();
-            }
-          }
-        },
-        { recursive: false },
-      );
-
-      return `OK open ${path}\n${contentString}`;
-    } catch (e: any) {
-      return `ERR ${e.message}`;
+    const content = fs.read(path);
+    if (!content) {
+      throw new Error(`File ${path} was not found`);
     }
+    const contentString = content.join("\n");
+    if (contentString.length > 100000) {
+      throw new Error(
+        `File ${path} is too large to open (${contentString.length} characters). Please use a more specific tool or request a partial read.`,
+      );
+    }
+
+    const unsubscribe = fs.watch(
+      path,
+      () => {
+        try {
+          const newContent = fs.read(path);
+          const newContentString = newContent ? newContent.join("\n") : "";
+          const newResult = `OK open ${path}\n${newContentString}`;
+          if (!context.updateToolResult(toolCallId, newResult)) {
+            unsubscribe();
+          }
+        } catch (e: any) {
+          if (!context.updateToolResult(toolCallId, `ERR ${e.message}`)) {
+            unsubscribe();
+          }
+        }
+      },
+      { recursive: false },
+    );
+
+    return `open ${path}\n${contentString}`;
   },
 };
 

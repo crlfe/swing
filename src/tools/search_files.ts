@@ -27,26 +27,22 @@ const searchFilesTool: Tool = {
     if (logInfo) {
       logInfo(`Searching files: ${query}`);
     }
-    try {
-      const results: string[] = [];
+    const results: string[] = [];
 
-      fs.walk("", (path, node) => {
-        if (node.type === "blob") {
-          const content = node.content;
-          const contentString = content ? content.join("\n") : "";
-          if (contentString.includes(query)) {
-            results.push(path);
-          }
+    fs.walk("", (path, node) => {
+      if (node.type === "blob") {
+        const content = node.content;
+        const contentString = content ? content.join("\n") : "";
+        if (contentString.includes(query)) {
+          results.push(path);
         }
-      });
-
-      if (results.length === 0) {
-        return `OK search found no results ${query}`;
       }
-      return `OK search found ${query}\n${results.join("\n")}\n`;
-    } catch (e: any) {
-      return `ERR ${e.message}`;
+    });
+
+    if (results.length === 0) {
+      return `search found no results ${query}`;
     }
+    return `search found ${query}\n${results.join("\n")}\n`;
   },
 };
 

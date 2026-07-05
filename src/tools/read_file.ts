@@ -28,19 +28,17 @@ const readFileTool: Tool = {
     if (logInfo) {
       logInfo(`Reading file: ${path}`);
     }
-    try {
-      const content = fs.read(path);
-      if (!content) {
-        return `ERR File not found: ${path}`;
-      }
-      const contentString = content.join("\n");
-      if (contentString.length > 100000) {
-        return `ERR File ${path} is too large to read (${contentString.length} characters). Please use a more specific tool or request a partial read.`;
-      }
-      return `OK read ${path}\n${contentString}`;
-    } catch (e: any) {
-      return `ERR ${e.message}`;
+    const content = fs.read(path);
+    if (!content) {
+      throw new Error(`File not found: ${path}`);
     }
+    const contentString = content.join("\n");
+    if (contentString.length > 100000) {
+      throw new Error(
+        `File ${path} is too large to read (${contentString.length} characters). Please use a more specific tool or request a partial read.`,
+      );
+    }
+    return `read ${path}\n${contentString}`;
   },
 };
 

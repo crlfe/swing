@@ -36,55 +36,52 @@ const appendLinesTool: Tool = {
     if (logInfo) {
       logInfo(`Appending lines in: ${path}`);
     }
-    try {
-      const fileLines = fs.read(path);
-      if (!fileLines) {
-        return `ERR File not found: ${path}`;
-      }
-      const appendLines = content.split(/\r?\n/);
 
-      if (!search) {
-        const newLines = [...fileLines, ...appendLines];
-        fs.write(path, newLines);
-        return `OK appended to end of ${path}`;
-      }
+    const fileLines = fs.read(path);
+    if (!fileLines) {
+      throw new Error(`File not found: ${path}`);
+    }
+    const appendLines = content.split(/\r?\n/);
 
-      const searchLines = search
-        .split(/\r?\n/)
-        .filter((line) => line.trim() !== "" || search.includes("\n"));
-      const trimmedSearchLines = searchLines.map((l) => l.trim());
+    if (!search) {
+      const newLines = [...fileLines, ...appendLines];
+      fs.write(path, newLines);
+      return `appended to end of ${path}`;
+    }
 
-      let matchStartIndex = -1;
-      for (let i = 0; i <= fileLines.length - searchLines.length; i++) {
-        let match = true;
-        for (let j = 0; j < searchLines.length; j++) {
-          if (fileLines[i + j]?.trim() !== trimmedSearchLines[j]) {
-            match = false;
-            break;
-          }
-        }
-        if (match) {
-          matchStartIndex = i;
+    const searchLines = search
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== "" || search.includes("\n"));
+    const trimmedSearchLines = searchLines.map((l) => l.trim());
+
+    let matchStartIndex = -1;
+    for (let i = 0; i <= fileLines.length - searchLines.length; i++) {
+      let match = true;
+      for (let j = 0; j < searchLines.length; j++) {
+        if (fileLines[i + j]?.trim() !== trimmedSearchLines[j]) {
+          match = false;
           break;
         }
       }
-
-      if (matchStartIndex === -1) {
-        return `ERR Search string not found in file ${path}`;
+      if (match) {
+        matchStartIndex = i;
+        break;
       }
-
-      const insertIndex = matchStartIndex + searchLines.length;
-      const newLines = [
-        ...fileLines.slice(0, insertIndex),
-        ...appendLines,
-        ...fileLines.slice(insertIndex),
-      ];
-
-      fs.write(path, newLines);
-      return `OK appended content after match in ${path}`;
-    } catch (e: any) {
-      return `ERR ${e.message}`;
     }
+
+    if (matchStartIndex === -1) {
+      throw new Error(`Search string not found in file ${path}`);
+    }
+
+    const insertIndex = matchStartIndex + searchLines.length;
+    const newLines = [
+      ...fileLines.slice(0, insertIndex),
+      ...appendLines,
+      ...fileLines.slice(insertIndex),
+    ];
+
+    fs.write(path, newLines);
+    return `appended content after match in ${path}`;
   },
 };
 

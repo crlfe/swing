@@ -53,7 +53,13 @@ async function executeTools(toolCalls: ToolCall[], config: ChatConfig): Promise<
       throw new Error(`Unknown tool: ${toolCall.function.name}`);
     }
     const args = JSON.parse(toolCall.function.arguments);
-    const result = await tool.execute(args, config, toolCall.id);
+    let result;
+    try {
+      result = await tool.execute(args, config, toolCall.id);
+      result = `OK ${result}`;
+    } catch (e: any) {
+      result = `ERR ${e.message}`;
+    }
     toolResults.push({
       role: "tool",
       tool_call_id: toolCall.id,

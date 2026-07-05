@@ -29,15 +29,11 @@ const moveFileTool: Tool = {
     if (logInfo) {
       logInfo(`Moving file from ${oldPath} to ${newPath}`);
     }
-    try {
-      if (fs.has(newPath)) {
-        throw new Error("Destination already exists");
-      }
-      fs.move(oldPath, newPath);
-      return `OK moved ${oldPath} to ${newPath}`;
-    } catch (e: any) {
-      return `ERR ${e.message}`;
+    if (fs.has(newPath)) {
+      throw new Error("Destination already exists");
     }
+    fs.move(oldPath, newPath);
+    return `moved ${oldPath} to ${newPath}`;
   },
 };
 

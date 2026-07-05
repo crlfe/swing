@@ -31,20 +31,16 @@ const writeFileTool: Tool = {
     if (logInfo) {
       logInfo(`Writing file: ${path}`);
     }
-    try {
-      fs.write(path, content.split(/\r?\n/));
+    fs.write(path, content.split(/\r?\n/));
 
-      // Update editor view if open
-      if ("document" in globalThis) {
-        state.updateViewContent(path, content);
-        // Update preview
-        debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
-      }
-
-      return `OK wrote ${path}`;
-    } catch (e: any) {
-      return `ERR ${e.message}`;
+    // Update editor view if open
+    if ("document" in globalThis) {
+      state.updateViewContent(path, content);
+      // Update preview
+      debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
     }
+
+    return `wrote ${path}`;
   },
 };
 

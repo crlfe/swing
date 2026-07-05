@@ -27,12 +27,8 @@ const deleteFileTool: Tool = {
     if (logInfo) {
       logInfo(`Deleting file: ${path}`);
     }
-    try {
-      fs.delete(path);
-      return `OK deleted ${path}`;
-    } catch (e: any) {
-      return `ERR ${e.message}`;
-    }
+    fs.delete(path);
+    return `deleted ${path}`;
   },
 };
 

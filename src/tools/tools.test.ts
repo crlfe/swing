@@ -54,14 +54,16 @@ describe("Tools", () => {
     });
 
     it("should return error for non-existent path", async () => {
-      const result = await listFilesTool.execute({ path: "ghost" }, config);
-      expect(result).toContain("ERR Path not found");
+      await expect(listFilesTool.execute({ path: "ghost" }, config)).rejects.toThrow(
+        "Path not found",
+      );
     });
 
     it("should return error if path is a file", async () => {
       fs.write("file1.txt", ["1"]);
-      const result = await listFilesTool.execute({ path: "file1.txt" }, config);
-      expect(result).toContain("ERR Path is not a directory");
+      await expect(listFilesTool.execute({ path: "file1.txt" }, config)).rejects.toThrow(
+        "Path is not a directory",
+      );
     });
   });
 
@@ -69,19 +71,20 @@ describe("Tools", () => {
     it("should read a file's content", async () => {
       fs.write("test.txt", ["hello world"]);
       const result = await readFileTool.execute({ path: "test.txt" }, config);
-      expect(result).toContain("OK read test.txt\nhello world");
+      expect(result).toContain("read test.txt\nhello world");
     });
 
     it("should return error for non-existent file", async () => {
-      const result = await readFileTool.execute({ path: "ghost.txt" }, config);
-      expect(result).toContain("ERR Path not found");
+      await expect(readFileTool.execute({ path: "ghost.txt" }, config)).rejects.toThrow(
+        "Path not found",
+      );
     });
   });
 
   describe("write_file", () => {
     it("should write content to a file", async () => {
       const result = await writeFileTool.execute({ path: "new.txt", content: "content" }, config);
-      expect(result).toBe("OK wrote new.txt");
+      expect(result).toBe("wrote new.txt");
       expect(fs.read("new.txt")).toEqual(["content"]);
     });
 
@@ -104,7 +107,7 @@ describe("Tools", () => {
         config,
       );
 
-      expect(result).toContain("OK edited");
+      expect(result).toContain("edited");
       expect(fs.read("test.txt")).toEqual(["Hello Vitest", "This is a test"]);
     });
 
@@ -119,21 +122,22 @@ describe("Tools", () => {
         config,
       );
 
-      expect(result).toContain("OK edited");
+      expect(result).toContain("edited");
       expect(fs.read("test.ts")).toEqual(["function test() {", "  console.log('hello');", "}"]);
     });
 
     it("should return error if search string not found", async () => {
       fs.write("test.txt", ["Hello World"]);
-      const result = await replaceLinesTool.execute(
-        {
-          path: "test.txt",
-          search: "Ghost",
-          replace: "Found",
-        },
-        config,
-      );
-      expect(result).toContain("ERR Search string not found");
+      await expect(
+        replaceLinesTool.execute(
+          {
+            path: "test.txt",
+            search: "Ghost",
+            replace: "Found",
+          },
+          config,
+        ),
+      ).rejects.toThrow("Search string not found");
     });
   });
 
@@ -147,7 +151,7 @@ describe("Tools", () => {
         },
         config,
       );
-      expect(result).toContain("OK appended to end");
+      expect(result).toContain("appended to end");
       expect(fs.read("test.txt")).toEqual(["line 1", "line 2"]);
     });
 
@@ -161,21 +165,22 @@ describe("Tools", () => {
         },
         config,
       );
-      expect(result).toContain("OK appended content after match");
+      expect(result).toContain("appended content after match");
       expect(fs.read("test.txt")).toEqual(["start", "middle", "inserted", "end"]);
     });
 
     it("should return error if search string not found", async () => {
       fs.write("test.txt", ["hello"]);
-      const result = await appendLinesTool.execute(
-        {
-          path: "test.txt",
-          content: "world",
-          search: "ghost",
-        },
-        config,
-      );
-      expect(result).toContain("ERR Search string not found");
+      await expect(
+        appendLinesTool.execute(
+          {
+            path: "test.txt",
+            content: "world",
+            search: "ghost",
+          },
+          config,
+        ),
+      ).rejects.toThrow("Search string not found");
     });
   });
 
@@ -189,7 +194,7 @@ describe("Tools", () => {
         },
         config,
       );
-      expect(result).toContain("OK inserted at beginning");
+      expect(result).toContain("inserted at beginning");
       expect(fs.read("test.txt")).toEqual(["line 1", "line 2"]);
     });
 
@@ -203,21 +208,22 @@ describe("Tools", () => {
         },
         config,
       );
-      expect(result).toContain("OK inserted content before match");
+      expect(result).toContain("inserted content before match");
       expect(fs.read("test.txt")).toEqual(["start", "inserted", "middle", "end"]);
     });
 
     it("should return error if search string not found", async () => {
       fs.write("test.txt", ["hello"]);
-      const result = await insertLinesTool.execute(
-        {
-          path: "test.txt",
-          content: "world",
-          search: "ghost",
-        },
-        config,
-      );
-      expect(result).toContain("ERR Search string not found");
+      await expect(
+        insertLinesTool.execute(
+          {
+            path: "test.txt",
+            content: "world",
+            search: "ghost",
+          },
+          config,
+        ),
+      ).rejects.toThrow("Search string not found");
     });
   });
 
@@ -225,13 +231,14 @@ describe("Tools", () => {
     it("should delete a file", async () => {
       fs.write("delete-me.txt", ["bye"]);
       const result = await deleteFileTool.execute({ path: "delete-me.txt" }, config);
-      expect(result).toBe("OK deleted delete-me.txt");
+      expect(result).toBe("deleted delete-me.txt");
       expect(fs.has("delete-me.txt")).toBe(false);
     });
 
     it("should return error for non-existent file", async () => {
-      const result = await deleteFileTool.execute({ path: "ghost.txt" }, config);
-      expect(result).toContain("ERR Path not found");
+      await expect(deleteFileTool.execute({ path: "ghost.txt" }, config)).rejects.toThrow(
+        "Path not found",
+      );
     });
   });
 
@@ -239,7 +246,7 @@ describe("Tools", () => {
     it("should move/rename a file", async () => {
       fs.write("old.txt", ["content"]);
       const result = await moveFileTool.execute({ oldPath: "old.txt", newPath: "new.txt" }, config);
-      expect(result).toBe("OK moved old.txt to new.txt");
+      expect(result).toBe("moved old.txt to new.txt");
       expect(fs.read("new.txt")).toEqual(["content"]);
       expect(fs.has("old.txt")).toBe(false);
     });
@@ -247,8 +254,9 @@ describe("Tools", () => {
     it("should return error if destination exists", async () => {
       fs.write("f1.txt", ["1"]);
       fs.write("f2.txt", ["2"]);
-      const result = await moveFileTool.execute({ oldPath: "f1.txt", newPath: "f2.txt" }, config);
-      expect(result).toContain("ERR Destination already exists");
+      await expect(
+        moveFileTool.execute({ oldPath: "f1.txt", newPath: "f2.txt" }, config),
+      ).rejects.toThrow("Destination already exists");
     });
   });
 
@@ -267,7 +275,7 @@ describe("Tools", () => {
     it("should return no results if query not found", async () => {
       fs.write("f1.txt", ["apple"]);
       const result = await searchFilesTool.execute({ query: "orange" }, config);
-      expect(result).toContain("OK search found no results");
+      expect(result).toContain("search found no results");
     });
   });
 
@@ -275,18 +283,20 @@ describe("Tools", () => {
     it("should open a file and return its content", async () => {
       fs.write("open.txt", ["hello open"]);
       const result = await openFileTool.execute({ path: "open.txt" }, config, "call-1");
-      expect(result).toContain("OK open open.txt\nhello open");
+      expect(result).toContain("open open.txt\nhello open");
     });
 
     it("should return error for non-existent file", async () => {
-      const result = await openFileTool.execute({ path: "ghost.txt" }, config, "call-2");
-      expect(result).toContain("ERR");
+      await expect(openFileTool.execute({ path: "ghost.txt" }, config, "call-2")).rejects.toThrow(
+        "Path not found",
+      );
     });
 
     it("should return error for too large file", async () => {
       fs.write("large.txt", ["a".repeat(100001)]);
-      const result = await openFileTool.execute({ path: "large.txt" }, config, "call-3");
-      expect(result).toContain("ERR File large.txt is too large to open");
+      await expect(openFileTool.execute({ path: "large.txt" }, config, "call-3")).rejects.toThrow(
+        "File large.txt is too large to open",
+      );
     });
 
     it("should update content when file changes", async () => {
@@ -332,13 +342,14 @@ describe("Tools", () => {
       });
 
       const result = await forgetTool.execute({ toolCallId: "call-99" }, config);
-      expect(result).toBe("OK forgotten tool call call-99");
+      expect(result).toBe("forgotten tool call call-99");
       expect(config.context.getToolResult("call-99")).toBeUndefined();
     });
 
     it("should return error if toolCallId is missing or invalid", async () => {
-      const result = await forgetTool.execute({ toolCallId: "non-existent" }, config);
-      expect(result).toContain("ERR");
+      await expect(forgetTool.execute({ toolCallId: "non-existent" }, config)).rejects.toThrow(
+        "Tool call not found",
+      );
     });
   });
 });
