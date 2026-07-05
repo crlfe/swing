@@ -28,16 +28,17 @@ const searchFilesTool: Tool = {
       logInfo(`Searching files: ${query}`);
     }
     try {
-      const files = fs.list();
       const results: string[] = [];
 
-      for (const file of files) {
-        const content = fs.read(file);
-        const contentString = content ? content.join("\n") : "";
-        if (contentString.includes(query)) {
-          results.push(file);
+      fs.walk("", (path, node) => {
+        if (node.type === "blob") {
+          const content = node.content;
+          const contentString = content ? content.join("\n") : "";
+          if (contentString.includes(query)) {
+            results.push(path);
+          }
         }
-      }
+      });
 
       if (results.length === 0) {
         return `OK search found no results ${query}`;
