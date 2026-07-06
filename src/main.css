@@ -2,7 +2,7 @@ body {
   margin: 0;
   display: grid;
   grid-template-columns: 200px 1fr;
-  grid-template-rows: 1fr 400px;
+  grid-template-rows: 1fr auto;
   height: 100vh;
   font-family: sans-serif;
   overflow: hidden;
@@ -44,8 +44,7 @@ body {
 
 /* Main Content Area */
 #main-content {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: block;
   height: 100%;
   overflow: hidden;
 }
@@ -55,15 +54,21 @@ body {
   display: flex;
   flex-direction: column;
   background: #fff;
-  border-right: 1px solid #ccc;
   min-width: 0; /* Prevents content from expanding the grid column */
   height: 100%;
+  overflow: hidden;
 }
 #workspace.collapsed {
   display: none;
 }
 
-/* Updated Tab Bar to match Header style */
+#editors-container {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tab Bar Styling */
 .tab-bar {
   display: flex;
   gap: 0;
@@ -111,68 +116,19 @@ body {
 
 .editor-pane {
   display: none;
-  flex-grow: 1;
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
 }
 .editor-pane.active {
-  display: block;
-}
-
-/* Preview Styling */
-#preview-container {
-  background: #fff;
   display: flex;
   flex-direction: column;
-  min-width: 0;
-}
-#preview-container.collapsed {
-  width: 30px;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
+  place-items: stretch;
 }
-
-body.preview-collapsed #main-content {
-  grid-template-columns: 1fr 30px;
-}
-
-#preview-iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
-}
-.preview-header {
-  background: #eee;
-  padding: 5px 15px;
-  font-size: 12px;
-  border-bottom: 1px solid #ccc;
-  color: #666;
-  font-weight: bold;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  white-space: nowrap;
-  transition: padding 0.2s ease;
-}
-#preview-container.collapsed .preview-header {
-  padding: 5px 0;
-  justify-content: center;
-  flex-direction: column;
-}
-#preview-container.collapsed .preview-header span {
-  display: none;
-}
-.toggle-preview-btn {
-  background: #ddd;
-  border: 1px solid #ccc;
-  cursor: pointer;
-  font-family: monospace;
-  font-weight: bold;
-  padding: 0 5px;
-  border-radius: 3px;
-  font-size: 10px;
-  min-width: 24px;
-}
-.toggle-preview-btn:hover {
-  background: #ccc;
+.cm-editor {
+  min-height: 0;
 }
 
 /* Chat Panel Styling */
@@ -183,6 +139,7 @@ body.preview-collapsed #main-content {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  height: auto;
 }
 .chat-header {
   background: #eee;
@@ -195,7 +152,7 @@ body.preview-collapsed #main-content {
 .chat-main {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex-grow: 1;
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -229,64 +186,40 @@ body.preview-collapsed #main-content {
   cursor: pointer;
 }
 
-.chat-config-overlay {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  left: 200px; /* Matches sidebar width */
-  height: 400px; /* Matches chat panel height */
-  background: #f0f0f0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 10;
-  border-top: 1px solid #ccc;
-}
-.chat-config-container {
-  background: white;
-  padding: 20px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  max-width: 500px;
-}
-.chat-config-title {
-  font-weight: bold;
-  font-size: 14px;
-  color: #333;
-  margin-bottom: 5px;
-}
-.config-group {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.config-group label {
+.chat-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 5px 10px;
+  background: #eee;
+  border-bottom: 1px solid #ccc;
   gap: 10px;
-  font-size: 12px;
-  color: #666;
 }
-.config-group input {
-  font-size: 12px;
-  padding: 4px;
+.chat-toolbar .config-group {
+  display: flex;
+  gap: 10px;
+}
+.chat-toolbar .config-group label {
+  font-size: 11px;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-toolbar input {
+  font-size: 11px;
+  padding: 2px 4px;
   border: 1px solid #ccc;
-  flex-grow: 1;
 }
 #chat-save-config {
-  padding: 6px 12px;
-  font-size: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
   cursor: pointer;
-  background: #eee;
-  border: 1px solid #ccc;
+  background: #ddd;
+  border: 1px solid #bbb;
 }
 #chat-save-config:hover {
-  background: #ddd;
+  background: #ccc;
 }
 
 /* Chat Log Type Styling */
@@ -311,4 +244,20 @@ body.preview-collapsed #main-content {
   color: #333;
   font-weight: bold;
   margin: 8px 0;
+}
+
+.chat-resize-handle {
+  height: 6px;
+  cursor: ns-resize;
+  background: #ddd;
+  border-top: 1px solid #ccc;
+  width: 100%;
+  position: absolute;
+  top: -3px;
+  left: 0;
+  z-index: 20;
+  transition: background 0.2s;
+}
+.chat-resize-handle:hover {
+  background: #bbb;
 }

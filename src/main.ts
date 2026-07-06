@@ -2,9 +2,9 @@ import { FileTree } from "./data/file-tree.ts";
 import { createEditor } from "./editor.ts";
 import { getExampleFiles } from "./fs-example.ts";
 import { state } from "./state.ts";
-import { renderChat } from "./ui-chat.ts";
 import { enterRenameMode, renderSidebar, resolvePath } from "./ui-sidebar.ts";
 import { activateTab, addTab, removeTabUI, updateTabLabel } from "./ui-tabs.ts";
+import { ChatView } from "./view/chat.ts";
 
 const fs = new FileTree();
 {
@@ -50,7 +50,6 @@ function switchTab(fileName: string): void {
     const el = item as HTMLElement;
     el.classList.toggle("active", el.dataset.filename === fileName);
   });
-  // refreshPreview(state.activeHtmlFile, fs, state.views);
   const view = state.getView(fileName);
   if (view) {
     view.requestMeasure();
@@ -86,6 +85,7 @@ function handleFileOpen(path: string, isNew = false): void {
       }
     });
 
+    console.log({ fs, path });
     const view = createEditor(
       path,
       fs.read(path)?.join("\n") ?? "",
@@ -143,31 +143,14 @@ function initSidebar(): void {
   renderSidebar(fs, handleFileOpen, handleRename, handleDelete);
 }
 
-function initPreviewToggle(): void {
-  const btn = document.getElementById("toggle-preview-btn");
-  const container = document.getElementById("preview-container");
-  if (!btn || !container) return;
-
-  // btn.onclick = () => {
-  //   const isCollapsed = container.classList.toggle("collapsed");
-  //   btn.innerText = isCollapsed ? "«" : "»";
-  //   document.body.classList.toggle("preview-collapsed", isCollapsed);
-  // };
-
-  // Force collapsed state for now
-  container.classList.add("collapsed");
-  btn.innerText = "«";
-  document.body.classList.add("preview-collapsed");
-}
-
 initSidebar();
-initPreviewToggle();
-renderChat(fs);
 
-const initialFile = fs.listWithDirectoriesFirst().find((path) => !path.endsWith("/"));
+const chatView = new ChatView(fs);
+document.body.appendChild(chatView.view);
+
+const initialFile = fs.list().find((path) => !path.endsWith("/"));
 if (initialFile) {
   handleFileOpen(initialFile);
 } else {
   updateWorkspaceVisibility();
 }
-// refreshPreview(state.activeHtmlFile, fs, state.views);

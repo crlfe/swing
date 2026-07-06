@@ -199,6 +199,7 @@ export function renderSidebar(
           },
           ["📦 Download Project (.zip)"],
         ),
+        h("div", { style: "height: 10px" }),
         h(
           "button",
           {
@@ -216,6 +217,24 @@ export function renderSidebar(
             },
           },
           ["🔄 Reset Project"],
+        ),
+        h(
+          "button",
+          {
+            class: "sidebar-btn reset-btn",
+            style: "color: #c0392b",
+            onclick: () => {
+              if (
+                confirm(
+                  "Are you sure you want to clear all data? This will delete everything in localStorage and reload the page.",
+                )
+              ) {
+                localStorage.clear();
+                location.reload();
+              }
+            },
+          },
+          ["🧹 Clear All State"],
         ),
       ],
     );

@@ -7,7 +7,7 @@ export function getExampleFiles() {
 </head>
 <body>
     <h1>Welcome to Swing IDE</h1>
-    <p>This is a real-time preview. Edit the files to see changes!</p>
+    <p>There might be a real-time preview again later, but for now you can edit the files.</p>
     <div class="card">
         <p>The styling comes from <code>src/main.css</code></p>
         <button id="magic-btn">Click for Magic</button>
@@ -16,7 +16,8 @@ export function getExampleFiles() {
 </body>
 </html>`,
 
-    "src/main.css": `body {
+    src: {
+      "main.css": `body {
     font-family: system-ui, sans-serif;
     background: #f0f2f5;
     display: flex;
@@ -51,11 +52,12 @@ button:hover {
     background: #0056b3;
 }`,
 
-    "src/main.js": `document.getElementById("magic-btn").onclick = () => {
+      "main.js": `document.getElementById("magic-btn").onclick = () => {
     const colors = ["#ffadad", "#ffd6a5", "#fdffb6", "#caffbf", "#9bf6ff", "#a0c4ff", "#bdb2ff", "#ffc6ff"];
     const randomColor = colors[Math.floor(Math.random() * colors.length)];
     document.body.style.backgroundColor = randomColor;
     console.log("Magic color applied!");
 };`,
+    },
   };
 }
