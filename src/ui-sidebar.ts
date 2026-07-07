@@ -127,20 +127,37 @@ export function renderSidebar(
     }
   });
 
+  const collapsedDirs = new Set<string>();
+
   const updateTree = () => {
     list.replaceChildren();
 
     const renderTree = (node: TreeDir, currentPath = "", level = 0): void => {
-      node.children.entries().forEach(([name, child]) => {
+      const entries = Array.from(node.children.entries());
+      entries.sort(([aName, aChild], [bName, bChild]) => {
+        if (aChild.type === "dir" && bChild.type !== "dir") return -1;
+        if (aChild.type !== "dir" && bChild.type === "dir") return 1;
+        return aName.localeCompare(bName);
+      });
+
+      entries.forEach(([name, child]) => {
         const path = currentPath ? `${currentPath}/${name}` : name;
         const isDir = child.type === "dir";
+        const isCollapsed = isDir && collapsedDirs.has(path);
+
         const li = h(
           "li",
           {
             class: "file-item",
             style: `padding-left: ${15 + level * 12}px`,
             ...(isDir
-              ? {}
+              ? {
+                  onclick: () => {
+                    if (collapsedDirs.has(path)) collapsedDirs.delete(path);
+                    else collapsedDirs.add(path);
+                    updateTree();
+                  },
+                }
               : {
                   "data-filename": path,
                   onclick: () => onOpen(path),
@@ -150,11 +167,11 @@ export function renderSidebar(
                   },
                 }),
           },
-          [h("span", {}, [(isDir ? "📁 " : "📄 ") + name])],
+          [h("span", {}, [(isDir ? (isCollapsed ? "📁 " : "📂 ") : "📄 ") + name])],
         );
 
         list.appendChild(li);
-        if (isDir) renderTree(child, path, level + 1);
+        if (isDir && !isCollapsed) renderTree(child, path, level + 1);
       });
     };
 
@@ -242,7 +259,7 @@ export function renderSidebar(
     list.appendChild(actions);
   };
 
-  fs.watch("", updateTree);
+  fs.watch("", updateTree, { recursive: true });
   updateTree();
 }
 

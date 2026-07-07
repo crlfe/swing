@@ -28,12 +28,16 @@ const fs = new FileTree();
     fs.fromJSON(getExampleFiles());
   }
 
-  fs.watch("", () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ version: STORAGE_VERSION, files: fs.toJSON() }),
-    );
-  });
+  fs.watch(
+    "",
+    () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ version: STORAGE_VERSION, files: fs.toJSON() }),
+      );
+    },
+    { recursive: true },
+  );
 }
 
 function updateWorkspaceVisibility(): void {
@@ -85,7 +89,6 @@ function handleFileOpen(path: string, isNew = false): void {
       }
     });
 
-    console.log({ fs, path });
     const view = createEditor(
       path,
       fs.read(path)?.join("\n") ?? "",

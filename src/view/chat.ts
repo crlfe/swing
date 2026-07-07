@@ -7,20 +7,54 @@ import { ChatProfilesManager } from "./chat-profiles.ts";
 export class ChatView {
   public readonly view: HTMLElement;
   private readonly profiles = new ChatProfilesManager();
+  private readonly context = new ChatContext();
 
   constructor(private fs: FileTree) {
+    this.context.addMessage({ role: "system", content: getSystemPrompt() });
+
+    let messagesContainer: HTMLElement;
+    let input: HTMLTextAreaElement;
+    let sendBtn: HTMLButtonElement;
+    let abortBtn: HTMLButtonElement;
     const main = h("div", { class: "chat-main" }, [
-      h("div", { class: "chat-content", id: "chat-messages" }, [
+      (messagesContainer = h("div", { class: "chat-content", id: "chat-messages" }, [
         h("div", {}, ["Welcome! How can I help you today?"]),
-      ]),
+      ])),
       h("div", { class: "chat-input-area" }, [
-        h("textarea", { id: "chat-input", placeholder: "Ask something..." }),
-        h("button", { id: "chat-send-btn" }, ["Send"]),
-        h("button", { id: "chat-abort-btn", disabled: true }, ["Stop"]),
-        h("button", { id: "chat-clear-btn" }, ["Clear"]),
+        (input = h("textarea", {
+          id: "chat-input",
+          placeholder: "Ask something...",
+          onkeydown: (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              sendBtn.click();
+            }
+          },
+        })),
+        (sendBtn = h(
+          "button",
+          { onclick: () => this.sendClicked(input, messagesContainer, sendBtn, abortBtn) },
+          ["Send"],
+        )),
+        (abortBtn = h("button", { disabled: true }, ["Stop"])),
+        h(
+          "button",
+          {
+            onclick: () => {
+              this.context.clear();
+              this.context.addMessage({ role: "system", content: getSystemPrompt() });
+              if (messagesContainer) {
+                messagesContainer.innerHTML = "";
+                messagesContainer.appendChild(h("div", {}, ["Chat history cleared."]));
+              }
+            },
+          },
+          ["Clear"],
+        ),
       ]),
     ]);
 
+    let resizeHandle: HTMLDivElement;
     this.view = h(
       "div",
       {
@@ -29,7 +63,11 @@ export class ChatView {
         style: { position: "relative" },
       },
       [
-        h("div", { class: "chat-resize-handle" }),
+        (resizeHandle = createNSResizeHandle({
+          onChange: (height) => {
+            this.view.style.height = `${Math.max(height, 180)}px`;
+          },
+        })),
         h(
           "div",
           {
@@ -43,52 +81,14 @@ export class ChatView {
       ],
     );
 
-    const profileSelect = this.profiles.selectView;
-    const sendBtn = this.view.querySelector("#chat-send-btn") as HTMLButtonElement | null;
-    const abortBtn = this.view.querySelector("#chat-abort-btn") as HTMLButtonElement | null;
-    const clearBtn = this.view.querySelector("#chat-clear-btn") as HTMLButtonElement | null;
-    const resizeHandle = this.view.querySelector(".chat-resize-handle") as HTMLElement;
-    if (resizeHandle) {
-      let isResizing = false;
-
-      resizeHandle.onmousedown = (e) => {
-        isResizing = true;
-        document.addEventListener("mousemove", handleMouseMove);
-        document.addEventListener("mouseup", handleMouseUp);
-        document.body.style.cursor = "ns-resize";
-      };
-
-      const handleMouseMove = (e: MouseEvent) => {
-        if (!isResizing) return;
-        const panel = this.view;
-        const newHeight = window.innerHeight - e.clientY;
-        panel.style.height = `${Math.max(140, newHeight)}px`;
-      };
-
-      const handleMouseUp = () => {
-        isResizing = false;
-        document.removeEventListener("mousemove", handleMouseMove);
-        document.removeEventListener("mouseup", handleMouseUp);
-        document.body.style.cursor = "";
-      };
-    }
-
-    const input = this.view.querySelector("#chat-input") as HTMLTextAreaElement | null;
-
     const updateInputsDisabled = (disabled: boolean, wasDisabled: boolean = false) => {
-      if (input) input.disabled = disabled;
-      if (sendBtn) sendBtn.disabled = disabled;
+      input.disabled = disabled;
+      sendBtn.disabled = disabled;
       // Abort button is managed separately during active requests
 
-      const main = this.view.querySelector(".chat-main") as HTMLElement;
-      if (main) {
-        main.style.display = disabled ? "none" : "flex";
-      }
+      main.style.display = disabled ? "none" : "flex";
 
-      const resizeHandle = this.view.querySelector(".chat-resize-handle") as HTMLElement;
-      if (resizeHandle) {
-        resizeHandle.style.display = disabled ? "none" : "block";
-      }
+      resizeHandle.style.display = disabled ? "none" : "block";
 
       if (disabled) {
         this.view.style.height = "";
@@ -110,150 +110,134 @@ export class ChatView {
       this.profiles.applyProfile(val);
       updateInputsDisabled(val === "disabled", wasDisabled);
     };
+  }
 
-    const context = new ChatContext();
-    context.addMessage({ role: "system", content: getSystemPrompt() });
+  private async sendClicked(
+    input: HTMLTextAreaElement,
+    messagesContainer: HTMLElement,
+    sendBtn: HTMLButtonElement,
+    abortBtn: HTMLButtonElement,
+  ) {
+    const text = input.value.trim();
+    if (!text) return;
 
-    if (clearBtn) {
-      clearBtn.onclick = () => {
-        context.clear();
-        context.addMessage({ role: "system", content: getSystemPrompt() });
-        const messagesContainer = this.view.querySelector("#chat-messages");
-        if (messagesContainer) {
-          messagesContainer.innerHTML = "";
-          messagesContainer.appendChild(h("div", {}, ["Chat history cleared."]));
-        }
-      };
+    let lastLog: HTMLElement | undefined;
+    let lastLogType: "info" | "text" | "think" | "user" | "error" | null = null;
+
+    const aiMsgDiv = h(
+      "div",
+      {
+        style: { marginBottom: "10px", whiteSpace: "pre-wrap" },
+      },
+      [],
+    );
+
+    if (messagesContainer) {
+      if (
+        messagesContainer.children.length === 1 &&
+        (messagesContainer.firstChild?.textContent === "Welcome! How can I help you today?" ||
+          messagesContainer.firstChild?.textContent === "Chat history cleared.")
+      ) {
+        messagesContainer.innerHTML = "";
+      }
+      messagesContainer.appendChild(aiMsgDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
-    if (sendBtn && input && abortBtn) {
-      sendBtn.onclick = async () => {
-        const text = input.value.trim();
-        if (!text) return;
-
-        let logElements: HTMLElement[] = [];
-        let lastLog: HTMLElement | undefined;
-        let lastLogType: "info" | "text" | "think" | "user" | "error" | null = null;
-
-        const aiMsgDiv = h(
+    const log = (msg: string, type: "info" | "text" | "think" | "user" | "error") => {
+      if (lastLog && lastLogType === type) {
+        lastLog.textContent += msg;
+      } else {
+        const prefix = type === "user" ? "User: " : "";
+        lastLog = h(
           "div",
           {
-            style: { marginBottom: "10px", whiteSpace: "pre-wrap" },
+            class: `log-type-${type}`,
+            style: type === "error" ? { color: "red" } : {},
           },
-          [],
+          [prefix + msg],
         );
+        aiMsgDiv.appendChild(lastLog);
+      }
+      lastLogType = type;
 
-        const messagesContainer = this.view.querySelector("#chat-messages");
-        if (messagesContainer) {
-          if (
-            messagesContainer.children.length === 1 &&
-            (messagesContainer.firstChild?.textContent === "Welcome! How can I help you today?" ||
-              messagesContainer.firstChild?.textContent === "Chat history cleared.")
-          ) {
-            messagesContainer.innerHTML = "";
-          }
-          messagesContainer.appendChild(aiMsgDiv);
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+    };
+
+    const controller = new AbortController();
+    const config: ChatConfig = {
+      url: localStorage.getItem("chat-url") || "http://localhost:11434/v1/chat/completions",
+      model: localStorage.getItem("chat-model") || "gemma4:31b-cloud",
+      key: localStorage.getItem("chat-key") || "unspecified",
+      stream: true,
+      think: true,
+      fs: this.fs,
+      context: this.context,
+      abortController: controller,
+      logInfo(msg: string) {
+        log(msg + "\n", "info");
+      },
+      logText(msg: string) {
+        log(msg, "text");
+      },
+      logThink(msg: string) {
+        log(msg, "think");
+      },
+    };
+
+    log(text, "user");
+    input.value = "";
+    config.context.addMessage({ role: "user", content: text });
+
+    sendBtn.disabled = true;
+    abortBtn.disabled = false;
+
+    abortBtn.onclick = () => {
+      controller.abort();
+    };
+
+    try {
+      await sendMessageStream(config);
+    } catch (error: any) {
+      if (error.name === "AbortError") {
+        if (!lastLog) {
+          log(`Request aborted by user.`, "info");
+        } else {
+          log(" Request aborted by user.", "info");
         }
-
-        const log = (msg: string, type: "info" | "text" | "think" | "user" | "error") => {
-          if (lastLog && lastLogType === type) {
-            lastLog.textContent += msg;
-          } else {
-            const prefix = type === "user" ? "User: " : "";
-            lastLog = h(
-              "div",
-              {
-                class: `log-type-${type}`,
-                style: type === "error" ? { color: "red" } : {},
-              },
-              [prefix + msg],
-            );
-            logElements.push(lastLog);
-          }
-          lastLogType = type;
-
-          updateMessageContent(aiMsgDiv, logElements);
-          const messagesContainer = this.view.querySelector("#chat-messages");
-          if (messagesContainer) {
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
-          }
-        };
-
-        const controller = new AbortController();
-        const config: ChatConfig = {
-          url: localStorage.getItem("chat-url") || "http://localhost:11434/v1/chat/completions",
-          model: localStorage.getItem("chat-model") || "gemma4:31b-cloud",
-          key: localStorage.getItem("chat-key") || "unspecified",
-          stream: true,
-          think: true,
-          fs: this.fs,
-          context,
-          abortController: controller,
-          logInfo(msg: string) {
-            log(msg, "info");
-          },
-          logText(msg: string) {
-            log(msg, "text");
-          },
-          logThink(msg: string) {
-            log(msg, "think");
-          },
-        };
-
-        log(text, "user");
-        input.value = "";
-        config.context.addMessage({ role: "user", content: text });
-
-        sendBtn.disabled = true;
-        abortBtn.disabled = false;
-
-        abortBtn.onclick = () => {
-          controller.abort();
-        };
-
-        try {
-          await sendMessageStream(config);
-        } catch (e: any) {
-          if (e.name === "AbortError") {
-            if (logElements.length === 0) {
-              updateMessageContent(aiMsgDiv, `Request aborted by user.`, false);
-            } else {
-              log(" Request aborted by user.", "info");
-            }
-          } else {
-            log(`Error: ${e instanceof Error ? e.message : String(e)}`, "error");
-          }
-        } finally {
-          const isDisabled = this.profiles.value === "disabled";
-          sendBtn.disabled = isDisabled;
-          abortBtn.disabled = true;
-          abortBtn.onclick = null;
-        }
-      };
-
-      input.onkeydown = (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          sendBtn.click();
-        }
-      };
+      } else {
+        log(`Error: ${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    } finally {
+      const isDisabled = this.profiles.value === "disabled";
+      sendBtn.disabled = isDisabled;
+      abortBtn.disabled = true;
+      abortBtn.onclick = null;
     }
   }
 }
 
-function updateMessageContent(
-  msgDiv: HTMLElement,
-  content: string | HTMLElement[],
-  isError = false,
-): void {
-  const contentEl = document.createElement("span");
-  if (Array.isArray(content)) {
-    content.forEach((el) => contentEl.appendChild(el));
-  } else {
-    contentEl.textContent = content;
-    if (isError) contentEl.style.color = "red";
-  }
+function createNSResizeHandle(props: { onChange(height: number): void }): HTMLDivElement {
+  const view = h("div", {
+    class: "chat-resize-handle",
+    onpointerdown(e) {
+      e.preventDefault();
+      view.setPointerCapture(e.pointerId);
+      view.addEventListener("pointermove", handleMouseMove);
+      view.addEventListener("pointerup", handleMouseUp);
+    },
+  });
 
-  msgDiv.replaceChildren(contentEl);
+  const handleMouseMove = (event: PointerEvent) => {
+    props.onChange(window.innerHeight - event.clientY);
+  };
+
+  const handleMouseUp = () => {
+    view.removeEventListener("pointermove", handleMouseMove);
+    view.removeEventListener("pointerup", handleMouseUp);
+  };
+
+  return view;
 }

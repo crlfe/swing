@@ -1,3 +1,7 @@
+export type Props = Record<string, unknown> & {
+  [Name in keyof HTMLElementEventMap as `on${Name}`]?: (event: HTMLElementEventMap[Name]) => void;
+};
+
 /**
  * A lightweight hyperscript helper to create DOM elements.
  *
@@ -18,7 +22,12 @@
  *     },
  *   ]);
  */
-export function h(type: string, attrs?: Record<string, unknown>, children?: unknown): HTMLElement {
+export function h<TagName extends keyof HTMLElementTagNameMap>(
+  type: TagName,
+  props?: Props,
+  children?: unknown,
+): HTMLElementTagNameMap[TagName];
+export function h(type: string, attrs?: Props, children?: unknown): HTMLElement {
   const e = document.createElement(type);
 
   if (attrs) {

@@ -1,5 +1,3 @@
-import { debouncedRefreshPreview } from "../preview.ts";
-import { state } from "../state.ts";
 import { type Tool } from "./types.ts";
 
 interface WriteFileArgs {
@@ -32,14 +30,6 @@ const writeFileTool: Tool = {
       logInfo(`Writing file: ${path}`);
     }
     fs.write(path, content.split(/\r?\n/));
-
-    // Update editor view if open
-    if ("document" in globalThis) {
-      state.updateViewContent(path, content);
-      // Update preview
-      debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
-    }
-
     return `wrote ${path}`;
   },
 };
