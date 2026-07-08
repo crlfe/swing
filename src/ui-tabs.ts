@@ -1,31 +1,30 @@
 import { h } from "./h.ts";
 
 export function addTab(
-  path: string,
+  id: string,
+  label: string,
   onSwitch: (fileName: string) => void,
   onClose: (fileName: string) => void,
 ): HTMLElement {
-  const fileName = path;
-
   const btn = h(
     "button",
     {
       class: "tab-btn",
-      id: `btn-${fileName}`,
-      onclick: () => onSwitch(fileName),
+      id: `btn-${id}`,
+      onclick: () => onSwitch(id),
     },
     [
-      path.replace(/.*\//, ""),
+      label,
       h(
         "button",
         {
           class: "tab-close-btn",
           onclick: (e: Event) => {
             e.stopPropagation();
-            onClose(fileName);
+            onClose(id);
           },
         },
-        ["×"],
+        ["\u00d7"],
       ),
     ],
   );
@@ -34,7 +33,7 @@ export function addTab(
   if (tabBar) tabBar.appendChild(btn);
 
   const container = h("div", {
-    id: `editor-${fileName}`,
+    id: `editor-${id}`,
     class: "editor-pane",
   });
   const editorsContainer = document.getElementById("editors-container");

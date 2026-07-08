@@ -22,6 +22,7 @@ export class FileTree {
 
   fromJSON(json: RecursiveRecord<string, string>): void {
     this.#root = nodeFromObject(json);
+    this.#notifyAllWatchers();
   }
 
   toJSON(): RecursiveRecord<string, string> {
@@ -38,6 +39,7 @@ export class FileTree {
 
   clear(): void {
     this.#root = { type: "dir", children: new Map() };
+    this.#notifyAllWatchers();
   }
 
   constructor(root?: TreeDir) {
@@ -47,7 +49,7 @@ export class FileTree {
   list(): string[] {
     const result: string[] = [];
     this.walk("", (path, node) => {
-      if (path) result.push(path);
+      if (path) result.push(path + (node.type === "dir" ? "/" : ""));
       return true;
     });
     return result.sort();
@@ -246,6 +248,14 @@ export class FileTree {
             callback(path);
           }
         }
+      }
+    }
+  }
+
+  #notifyAllWatchers() {
+    for (const callbacks of this.#watchers.values()) {
+      for (const { callback } of callbacks) {
+        callback("");
       }
     }
   }

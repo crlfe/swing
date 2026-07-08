@@ -505,7 +505,7 @@ describe("FileTree", () => {
       tree.write("a.txt", ["a"]);
       tree.write("dir/c.txt", ["c"]);
 
-      expect(tree.list()).toEqual(["a.txt", "b.txt", "dir", "dir/c.txt"]);
+      expect(tree.list()).toEqual(["a.txt", "b.txt", "dir/", "dir/c.txt"]);
     });
 
     it("should return an empty array for an empty tree", () => {

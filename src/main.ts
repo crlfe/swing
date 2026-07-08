@@ -40,15 +40,8 @@ const fs = new FileTree();
   );
 }
 
-function updateWorkspaceVisibility(): void {
-  const workspace = document.getElementById("workspace");
-  if (!workspace) return;
-  const hasOpenTabs = Object.keys(state.views).length > 0;
-  workspace.classList.toggle("collapsed", !hasOpenTabs);
-}
-
 function switchTab(fileName: string): void {
-  state.setActiveFile(fileName);
+  state.setActiveTab(fileName);
   activateTab(fileName);
   document.querySelectorAll(".file-item").forEach((item) => {
     const el = item as HTMLElement;
@@ -60,27 +53,25 @@ function switchTab(fileName: string): void {
   }
 }
 
-function handleFileOpen(path: string, isNew = false): void {
-  if (isNew) {
-    try {
-      fs.write(path, []);
-    } catch (e: any) {
-      alert(e.message);
-      return;
-    }
-    initSidebar(); // Re-render sidebar to show the new file
+async function handleFileOpen(
+  id: string,
+  options: { label: string; content?: string[]; path?: string },
+): Promise<void> {
+  const { label, content: initialContent, path } = options;
+
+  if (path && initialContent) {
+    fs.write(path, initialContent);
   }
 
-  if (!state.getView(path)) {
-    const container = addTab(path, switchTab, (path: string) => {
-      removeTabUI(path);
-      const view = state.getView(path);
+  if (!state.getView(id)) {
+    const container = addTab(id, label, switchTab, () => {
+      removeTabUI(id);
+      const view = state.getView(id);
       if (view) {
         view.destroy();
-        state.unregisterView(path);
+        state.unregisterView(id);
       }
-      updateWorkspaceVisibility();
-      if (state.activeFile === path) {
+      if (state.activeId === id) {
         const tabs = document.querySelectorAll(".tab-btn");
         if (tabs.length > 0) {
           const firstTab = tabs[0] as HTMLElement;
@@ -89,19 +80,29 @@ function handleFileOpen(path: string, isNew = false): void {
       }
     });
 
-    const view = createEditor(
-      path,
-      fs.read(path)?.join("\n") ?? "",
+    const view = await createEditor(
+      id,
+      (path ? fs.read(path) : (initialContent ?? [])).join("\n"),
       (content: string) => {
-        fs.write(path, content.split("\n"));
-        // debouncedRefreshPreview(state.activeHtmlFile, fs, state.views);
+        if (path) {
+          fs.write(path, content.split("\n"));
+        }
       },
       container,
     );
-    state.registerView(path, view);
+    state.registerView(id, view);
+
+    if (path) {
+      const unwatch = fs.watch(path, () => {
+        if (!fs.has(path)) {
+          unwatch();
+          return;
+        }
+        state.updateViewContent(id, fs.read(path).join("\n"));
+      });
+    }
   }
-  switchTab(path);
-  updateWorkspaceVisibility();
+  switchTab(id);
 }
 
 function handleRename(li: HTMLElement, path: string): void {
@@ -117,12 +118,10 @@ function handleRename(li: HTMLElement, path: string): void {
         const btn = document.getElementById(`btn-${newPath}`);
         if (btn) btn.onclick = () => switchTab(newPath);
       }
-      if (state.activeFile === oldPath) state.setActiveFile(newPath);
-      // refreshPreview(state.activeHtmlFile, fs, state.views);
+      if (state.activeId === oldPath) state.setActiveTab(newPath);
     } catch (e: any) {
       alert(e.message);
     }
-    initSidebar();
   });
 }
 
@@ -135,8 +134,6 @@ function handleDelete(path: string): void {
       view.destroy();
       state.unregisterView(path);
     }
-    initSidebar();
-    updateWorkspaceVisibility();
   } catch (e: any) {
     alert(e.message);
   }
@@ -149,11 +146,4 @@ function initSidebar(): void {
 initSidebar();
 
 const chatView = new ChatView(fs);
-document.body.appendChild(chatView.view);
-
-const initialFile = fs.list().find((path) => !path.endsWith("/"));
-if (initialFile) {
-  handleFileOpen(initialFile);
-} else {
-  updateWorkspaceVisibility();
-}
+document.getElementById("main-content")?.appendChild(chatView.view);

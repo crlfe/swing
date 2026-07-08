@@ -61,3 +61,32 @@ export function diffTree(oldTree: TreeDir, newTree: TreeDir): Patch {
 
   return { files };
 }
+
+export function formatPatch(patch: Patch): string {
+  return patch.files
+    .map((file) => {
+      let output = "";
+      if (file.oldPath && file.newPath) {
+        output += `--- ${file.oldPath}\n+++ ${file.newPath}\n`;
+      } else if (file.oldPath) {
+        output += `--- ${file.oldPath}\n+++ /dev/null\n`;
+      } else if (file.newPath) {
+        output += `--- /dev/null\n+++ ${file.newPath}\n`;
+      }
+
+      for (const hunk of file.hunks) {
+        const oldLen = hunk.oldLines.length;
+        const newLen = hunk.newLines.length;
+        output += `@@ -${hunk.oldStart},${oldLen} +${hunk.newStart},${newLen} @@\n`;
+
+        for (const line of hunk.oldLines) {
+          output += `-${line}\n`;
+        }
+        for (const line of hunk.newLines) {
+          output += `+${line}\n`;
+        }
+      }
+      return output;
+    })
+    .join("\n");
+}

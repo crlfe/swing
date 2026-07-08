@@ -2,42 +2,37 @@ import { type EditorView, updateEditorContent } from "./editor.ts";
 
 interface AppState {
   views: Record<string, EditorView>;
-  activeHtmlFile: string;
-  activeFile: string | null;
+  activeId: string | null;
 
-  setActiveFile(path: string): void;
-  registerView(path: string, view: EditorView): void;
-  unregisterView(path: string): void;
-  getView(path: string): EditorView | undefined;
-  updateViewContent(path: string, content: string): void;
+  setActiveTab(id: string): void;
+  registerView(id: string, view: EditorView): void;
+  unregisterView(id: string): void;
+  getView(id: string): EditorView | undefined;
+  updateViewContent(id: string, content: string): void;
 }
 
 export const state: AppState = {
   views: {},
-  activeHtmlFile: "index.html",
-  activeFile: null,
+  activeId: null,
 
-  setActiveFile(path) {
-    this.activeFile = path;
-    if (path.endsWith(".html")) {
-      this.activeHtmlFile = path;
-    }
+  setActiveTab(id) {
+    this.activeId = id;
   },
 
-  registerView(path, view) {
-    this.views[path] = view;
+  registerView(id, view) {
+    this.views[id] = view;
   },
 
-  unregisterView(path) {
-    delete this.views[path];
+  unregisterView(id) {
+    delete this.views[id];
   },
 
-  getView(path) {
-    return this.views[path];
+  getView(id) {
+    return this.views[id];
   },
 
-  updateViewContent(path, content) {
-    const view = this.getView(path);
+  updateViewContent(id, content) {
+    const view = this.getView(id);
     if (view) {
       updateEditorContent(view, content);
     }
