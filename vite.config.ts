@@ -36,6 +36,9 @@ export default defineConfig({
       ].join("\n\n"),
     ),
   },
+  server: {
+    strictPort: true,
+  },
   test: {
     includeSource: ["src/**/*.ts"],
   },
