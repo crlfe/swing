@@ -206,7 +206,3 @@ export async function sendMessageStream(config: ChatConfig) {
     }
   }
 }
-
-export function getSystemPrompt(): string {
-  return "You are a helpful AI assistant integrated into a text editor. You are capable of helping the user write code, debug issues, and explain concepts. Be concise and professional.";
-}

@@ -10,6 +10,7 @@ import { ChatContext } from "../chat/context.ts";
 import { FileTree } from "../data/file-tree.ts";
 import type { RecursiveRecord } from "../data/trees.ts";
 import type { TreeDir, TreeNode } from "../data/types.ts";
+import { DEFAULT_SYSTEM_PROMPT } from "../view/chat-profiles.ts";
 
 async function loadFiles(path: string): Promise<FileTree> {
   async function walk(path: string): Promise<TreeDir> {
@@ -111,8 +112,7 @@ async function run() {
     },
   };
 
-  const systemPrompt = "You are a helpful AI assistant. Be concise and professional.";
-  config.context.addMessage({ role: "system", content: systemPrompt });
+  config.context.addMessage({ role: "system", content: DEFAULT_SYSTEM_PROMPT });
 
   const rl = readline.createInterface({
     input: process.stdin,

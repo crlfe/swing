@@ -1,16 +1,21 @@
-import { getSystemPrompt, sendMessageStream, type ChatConfig } from "../chat.ts";
+import { sendMessageStream, type ChatConfig } from "../chat.ts";
 import { ChatContext } from "../chat/context.ts";
 import type { FileTree } from "../data/file-tree.ts";
 import { h } from "../h.ts";
-import { ChatProfilesManager } from "./chat-profiles.ts";
+import { ChatProfilesView, DEFAULT_SYSTEM_PROMPT } from "./chat-profiles.ts";
 
 export class ChatView {
   public readonly view: HTMLElement;
-  private readonly profiles = new ChatProfilesManager();
+  private readonly profiles = new ChatProfilesView();
   private readonly context = new ChatContext();
 
   constructor(private fs: FileTree) {
-    this.context.addMessage({ role: "system", content: getSystemPrompt() });
+    const currentProfile = this.profiles.value;
+    const systemPrompt = currentProfile?.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    this.context.addMessage({
+      role: "system",
+      content: systemPrompt,
+    });
 
     let messagesContainer: HTMLElement;
     let input: HTMLTextAreaElement;
@@ -42,7 +47,12 @@ export class ChatView {
           {
             onclick: () => {
               this.context.clear();
-              this.context.addMessage({ role: "system", content: getSystemPrompt() });
+              const currentProfile = this.profiles.value;
+              const systemPrompt = currentProfile?.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+              this.context.addMessage({
+                role: "system",
+                content: systemPrompt,
+              });
               if (messagesContainer) {
                 messagesContainer.innerHTML = "";
                 messagesContainer.appendChild(h("div", {}, ["Chat history cleared."]));
@@ -81,7 +91,8 @@ export class ChatView {
       ],
     );
 
-    const updateInputsDisabled = (disabled: boolean, wasDisabled: boolean = false) => {
+    const updateInputsDisabled = () => {
+      const disabled = !this.profiles.value;
       input.disabled = disabled;
       sendBtn.disabled = disabled;
       // Abort button is managed separately during active requests
@@ -92,23 +103,18 @@ export class ChatView {
 
       if (disabled) {
         this.view.style.height = "";
-      } else if (wasDisabled && !this.view.style.height) {
-        this.view.style.height = `${window.innerHeight / 4}px`;
+      } else {
+        this.view.style.height = `${window.innerHeight / 3}px`;
       }
     };
 
-    const currentProfile = this.profiles.getCurrentProfileName();
-    updateInputsDisabled(currentProfile === "disabled");
-    if (currentProfile !== "disabled") {
-      this.view.style.height = `${window.innerHeight / 4}px`;
+    updateInputsDisabled();
+    if (currentProfile) {
+      this.view.style.height = `${window.innerHeight / 3}px`;
     }
 
-    this.profiles.onchange = async () => {
-      const val = this.profiles.value;
-      const wasDisabled = this.profiles.getCurrentProfileName() === "disabled";
-
-      this.profiles.applyProfile(val);
-      updateInputsDisabled(val === "disabled", wasDisabled);
+    this.profiles.onchange = () => {
+      updateInputsDisabled();
     };
   }
 
@@ -167,10 +173,11 @@ export class ChatView {
     };
 
     const controller = new AbortController();
+    const currentProfile = this.profiles.value;
     const config: ChatConfig = {
-      url: localStorage.getItem("chat-url") || "http://localhost:11434/v1/chat/completions",
-      model: localStorage.getItem("chat-model") || "gemma4:31b-cloud",
-      key: localStorage.getItem("chat-key") || "unspecified",
+      url: currentProfile?.url || "http://localhost:11434/v1/chat/completions",
+      model: currentProfile?.model || "gemma4:31b-cloud",
+      key: currentProfile?.key || "unspecified",
       stream: true,
       think: true,
       fs: this.fs,
@@ -211,7 +218,7 @@ export class ChatView {
         log(`Error: ${error instanceof Error ? error.message : String(error)}`, "error");
       }
     } finally {
-      const isDisabled = this.profiles.value === "disabled";
+      const isDisabled = !this.profiles.value;
       sendBtn.disabled = isDisabled;
       abortBtn.disabled = true;
       abortBtn.onclick = null;

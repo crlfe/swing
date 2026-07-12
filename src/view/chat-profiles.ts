@@ -1,14 +1,10 @@
+import { type ChatProfile, type ChatProfiles, ChatProfilesManager } from "../chat/profiles.ts";
 import { h } from "../h.ts";
 
-export interface ChatProfile {
-  url: string;
-  model: string;
-  key: string;
-}
+export const DEFAULT_SYSTEM_PROMPT = "Be a concise and professional coding assistant.";
 
-export type ChatProfiles = Record<string, ChatProfile>;
-
-export class ChatProfilesManager {
+export class ChatProfilesView {
+  private readonly manager = new ChatProfilesManager();
   public readonly dialogView: HTMLDialogElement;
   public readonly selectView: HTMLElement;
   private readonly selectElement: HTMLSelectElement;
@@ -17,8 +13,8 @@ export class ChatProfilesManager {
 
   private _onchange: (() => void | Promise<void>) | null = null;
 
-  public get value(): string {
-    return this.selectElement.value;
+  public get value(): ChatProfile | undefined {
+    return this.manager.getActiveProfile();
   }
 
   public set onchange(handler: () => void | Promise<void>) {
@@ -56,12 +52,17 @@ export class ChatProfilesManager {
                 ),
                 h(
                   "th",
-                  { style: { width: "25%", "border-bottom": "1px solid #ccc", padding: "8px" } },
+                  { style: { width: "20%", "border-bottom": "1px solid #ccc", padding: "8px" } },
                   ["Model"],
                 ),
                 h(
                   "th",
-                  { style: { width: "15%", "border-bottom": "1px solid #ccc", padding: "8px" } },
+                  { style: { width: "20%", "border-bottom": "1px solid #ccc", padding: "8px" } },
+                  ["API Key"],
+                ),
+                h(
+                  "th",
+                  { style: { width: "10%", "border-bottom": "1px solid #ccc", padding: "8px" } },
                   [""],
                 ),
               ]),
@@ -97,7 +98,10 @@ export class ChatProfilesManager {
       {
         id: "chat-profile-select",
         style: { fontSize: "10px", cursor: "pointer" },
-        onchange: () => this._onchange?.(),
+        onchange: () => {
+          this.manager.setActiveProfileName(this.selectElement.value);
+          this._onchange?.();
+        },
       },
       [],
     ) as unknown as HTMLSelectElement;
@@ -120,7 +124,7 @@ export class ChatProfilesManager {
   }
 
   private updateSelectVisibility() {
-    const profiles = this.getProfiles();
+    const profiles = this.manager.profiles;
     this.selectElement.style.display = Object.keys(profiles).length === 0 ? "none" : "";
   }
 
@@ -128,38 +132,30 @@ export class ChatProfilesManager {
     select.innerHTML = "";
     select.appendChild(h("option", { value: "disabled" }, ["Disabled"]));
 
-    const profiles = this.getProfiles();
+    const profiles = this.manager.profiles;
     const profileEntries = Object.entries(profiles);
     profileEntries.forEach(([name]) => {
       select.appendChild(h("option", { value: name }, [name]));
     });
 
-    const currentProfileName = this.getCurrentProfileName();
-    if (currentProfileName === "disabled" || profiles[currentProfileName]) {
-      select.value = currentProfileName;
+    const activeProfileName = this.manager.getActiveProfileName();
+    if (activeProfileName === "disabled" || profiles[activeProfileName]) {
+      select.value = activeProfileName;
     } else {
       select.value = "disabled";
-      localStorage.setItem("chat-current-profile", "disabled");
+      this.manager.setActiveProfileName("");
     }
   }
 
-  public getProfiles(): ChatProfiles {
-    return JSON.parse(localStorage.getItem("chat-profiles") || "{}");
-  }
+  private moveProfile(index: number, direction: number) {
+    const entries = Object.entries(this.workingProfiles);
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= entries.length) return;
 
-  public getCurrentProfileName(): string {
-    return localStorage.getItem("chat-current-profile") || "disabled";
-  }
+    entries.splice(newIndex, 0, ...entries.splice(index, 1));
 
-  public applyProfile(name: string): void {
-    const profiles = this.getProfiles();
-    const profile = profiles[name];
-    if (profile) {
-      localStorage.setItem("chat-url", profile.url);
-      localStorage.setItem("chat-model", profile.model);
-      localStorage.setItem("chat-key", profile.key);
-    }
-    localStorage.setItem("chat-current-profile", name);
+    this.workingProfiles = Object.fromEntries(entries);
+    this.renderTable();
   }
 
   public refreshSelect(): void {
@@ -171,7 +167,7 @@ export class ChatProfilesManager {
   }
 
   private async editProfiles(): Promise<void> {
-    const profiles = this.getProfiles();
+    const profiles = this.manager.profiles;
     this.workingProfiles = { ...profiles };
     this.renderTable();
     this.dialogView.showModal();
@@ -187,11 +183,11 @@ export class ChatProfilesManager {
       };
 
       const handleOk = () => {
-        localStorage.setItem("chat-profiles", JSON.stringify(this.workingProfiles));
+        this.manager.profiles = this.workingProfiles;
 
-        const currentProfileName = this.getCurrentProfileName();
-        if (currentProfileName !== "disabled" && !this.workingProfiles[currentProfileName]) {
-          localStorage.setItem("chat-current-profile", "disabled");
+        const activeProfileName = this.manager.getActiveProfileName();
+        if (activeProfileName && !this.workingProfiles[activeProfileName]) {
+          this.manager.setActiveProfileName("");
           this.selectElement.value = "disabled";
           this._onchange?.();
         }
@@ -218,11 +214,16 @@ export class ChatProfilesManager {
   }
 
   private addNewProfile() {
-    const id = `new-profile-${Date.now()}`;
-    this.workingProfiles[id] = {
+    let suffix = 1;
+    while (this.workingProfiles[`Profile ${suffix}`]) {
+      suffix++;
+    }
+    const name = `Profile ${suffix}`;
+    this.workingProfiles[name] = {
       url: "http://localhost:11434/v1/chat/completions",
       model: "gemma4:31b-cloud",
-      key: "unspecified",
+      key: "",
+      systemPrompt: "",
     };
     this.renderTable();
   }
@@ -256,7 +257,7 @@ export class ChatProfilesManager {
               value: profile.url,
               style: { width: "100%", border: "none", background: "transparent", padding: "0" },
               onchange: (e: any) => {
-                profile.url = e.target.value;
+                this.workingProfiles[name] = { ...profile, url: e.target.value };
               },
             }),
           ],
@@ -266,7 +267,17 @@ export class ChatProfilesManager {
             value: profile.model,
             style: { width: "100%", border: "none", background: "transparent", padding: "0" },
             onchange: (e: any) => {
-              profile.model = e.target.value;
+              this.workingProfiles[name] = { ...profile, model: e.target.value };
+            },
+          }),
+        ]),
+        h("td", { style: { padding: "8px", "border-bottom": "1px solid #eee" } }, [
+          h("input", {
+            type: "password",
+            value: profile.key,
+            style: { width: "100%", border: "none", background: "transparent", padding: "0" },
+            onchange: (e: any) => {
+              this.workingProfiles[name] = { ...profile, key: e.target.value };
             },
           }),
         ]),
@@ -286,53 +297,14 @@ export class ChatProfilesManager {
             h(
               "button",
               {
-                onclick: () => {
-                  const prev = entries[index - 1];
-                  if (prev != null) {
-                    const newProfiles = { ...this.workingProfiles };
-                    const keys = Object.keys(newProfiles);
-                    const [key1, key2] = [prev[0], name];
-
-                    const remaining = Object.entries(this.workingProfiles).filter(
-                      ([k]) => k !== key1 && k !== key2,
-                    );
-                    const sorted = [
-                      ...remaining.slice(0, index - 1),
-                      [key2, newProfiles[key2]],
-                      [key1, newProfiles[key1]],
-                      ...remaining.slice(index - 1),
-                    ];
-
-                    this.workingProfiles = Object.fromEntries(sorted);
-                    this.renderTable();
-                  }
-                },
+                onclick: () => this.moveProfile(index, -1),
               },
               ["↑"],
             ),
             h(
               "button",
               {
-                onclick: () => {
-                  const next = entries[index + 1];
-                  if (next != null) {
-                    const newProfiles = { ...this.workingProfiles };
-                    const [key1, key2] = [name, next[0]];
-
-                    const remaining = Object.entries(this.workingProfiles).filter(
-                      ([k]) => k !== key1 && k !== key2,
-                    );
-                    const sorted = [
-                      ...remaining.slice(0, index),
-                      [key2, newProfiles[key2]],
-                      [key1, newProfiles[key1]],
-                      ...remaining.slice(index),
-                    ];
-
-                    this.workingProfiles = Object.fromEntries(sorted);
-                    this.renderTable();
-                  }
-                },
+                onclick: () => this.moveProfile(index, 1),
               },
               ["↓"],
             ),
@@ -340,8 +312,32 @@ export class ChatProfilesManager {
               "button",
               {
                 onclick: () => {
-                  delete this.workingProfiles[name];
+                  let copyName = `${name} (Copy)`;
+                  let suffix = 2;
+                  while (this.workingProfiles[copyName]) {
+                    copyName = `${name} (Copy ${suffix++})`;
+                  }
+                  this.workingProfiles[copyName] = { ...profile };
                   this.renderTable();
+                },
+              },
+              ["Copy"],
+            ),
+            h(
+              "button",
+              {
+                onclick: () => this.editSystemPrompt(name, profile),
+              },
+              ["Prompt"],
+            ),
+            h(
+              "button",
+              {
+                onclick: () => {
+                  if (confirm(`Are you sure you want to delete profile "${name}"?`)) {
+                    delete this.workingProfiles[name];
+                    this.renderTable();
+                  }
                 },
               },
               ["Delete"],
@@ -351,5 +347,12 @@ export class ChatProfilesManager {
       ]);
       this.tableBody.appendChild(tr);
     });
+  }
+
+  private editSystemPrompt(name: string, profile: ChatProfile) {
+    const newPrompt = prompt("Edit system prompt:", profile.systemPrompt || DEFAULT_SYSTEM_PROMPT);
+    if (newPrompt !== null) {
+      this.workingProfiles[name] = { ...profile, systemPrompt: newPrompt };
+    }
   }
 }
