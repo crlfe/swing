@@ -3,11 +3,9 @@ import type { ChatCompletionChunk, Message, ToolCall } from "./chat/types.ts";
 import type { FileTree } from "./data/file-tree.ts";
 import appendLinesTool from "./tools/append_lines.ts";
 import deleteFileTool from "./tools/delete_file.ts";
-import forgetTool from "./tools/forget.ts";
 import insertLinesTool from "./tools/insert_lines.ts";
 import listFilesTool from "./tools/list_files.ts";
 import moveFileTool from "./tools/move_file.ts";
-import openFileTool from "./tools/open_file.ts";
 import readFileTool from "./tools/read_file.ts";
 import replaceLinesTool from "./tools/replace_lines.ts";
 import searchFilesTool from "./tools/search_files.ts";
@@ -31,7 +29,6 @@ export interface ChatConfig {
 
 const toolRegistry: Record<string, Tool> = {
   [listFilesTool.definition.function.name]: listFilesTool,
-  [openFileTool.definition.function.name]: openFileTool,
   [readFileTool.definition.function.name]: readFileTool,
   [searchFilesTool.definition.function.name]: searchFilesTool,
   [replaceLinesTool.definition.function.name]: replaceLinesTool,
@@ -40,7 +37,6 @@ const toolRegistry: Record<string, Tool> = {
   [writeFileTool.definition.function.name]: writeFileTool,
   [moveFileTool.definition.function.name]: moveFileTool,
   [deleteFileTool.definition.function.name]: deleteFileTool,
-  [forgetTool.definition.function.name]: forgetTool,
 };
 
 const tools = Object.values(toolRegistry).map((t) => t.definition);
