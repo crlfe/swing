@@ -14,6 +14,7 @@ body {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #444;
+  width: 12em;
 }
 #sidebar-header {
   padding: 15px;
@@ -22,12 +23,13 @@ body {
   border-bottom: 1px solid #444;
 }
 .file-list {
+  font-size: 0.75rem;
   list-style: none;
   padding: 0;
   margin: 0;
 }
 .file-item {
-  padding: 8px 15px;
+  padding: 4px 8px;
   cursor: pointer;
   border-bottom: 1px solid #333;
 }
@@ -39,8 +41,8 @@ body {
   color: white;
 }
 #sidebar-actions button {
-  padding: 0.25em 0.5em;
-  height: 2em;
+  padding: 0 0.5rem;
+  height: 1.75em;
 }
 
 /* Main Content Area */
@@ -139,8 +141,8 @@ body {
 }
 .chat-header {
   background: #eee;
-  padding: 5px 15px;
-  font-size: 12px;
+  padding: 0.5rem;
+  font-size: 0.75rem;
   border-bottom: 1px solid #ccc;
   color: #666;
   font-weight: bold;
@@ -172,13 +174,13 @@ body {
 .chat-input-area textarea {
   flex-grow: 1;
   padding: 5px;
-  font-size: 12px;
+  font-size: 0.75rem;
   border: 1px solid #ccc;
   resize: none;
 }
 .chat-input-area button {
-  padding: 5px 15px;
-  font-size: 12px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
   cursor: pointer;
 }
 
@@ -222,34 +224,32 @@ body {
 .log-type-think {
   color: #888;
   font-style: italic;
-  font-size: 13px;
-  margin: 8px 0;
+  font-size: 0.75rem;
+  margin: 0.5rem 0;
 }
 .log-type-info {
   color: #0056b3;
-  font-weight: bold;
-  font-size: 13px;
-  margin: 8px 0;
+  font-size: 0.75rem;
+  margin: 0.5rem 0;
 }
 .log-type-text {
   color: #333;
-  margin: 8px 0;
+  margin: 0.5rem 0;
 }
 
 .log-type-user {
   color: #333;
-  font-weight: bold;
-  margin: 8px 0;
+  margin: 0.5rem 0;
 }
 
 .chat-resize-handle {
-  height: 6px;
+  height: 4px;
   cursor: ns-resize;
   background: #ddd;
   border-top: 1px solid #ccc;
   width: 100%;
   position: absolute;
-  top: -3px;
+  top: -2px;
   left: 0;
   z-index: 20;
   transition: background 0.2s;

@@ -97,7 +97,7 @@ export class ChatProfilesView {
       "select",
       {
         id: "chat-profile-select",
-        style: { fontSize: "10px", cursor: "pointer" },
+        style: { "font-size": "0.75rem" },
         onchange: () => {
           this.manager.setActiveProfileName(this.selectElement.value);
           this._onchange?.();
@@ -106,12 +106,12 @@ export class ChatProfilesView {
       [],
     ) as unknown as HTMLSelectElement;
 
-    this.selectView = h("div", { style: { display: "flex", alignItems: "center", gap: "4px" } }, [
+    this.selectView = h("div", { style: { display: "flex", alignItems: "center", gap: "0.5rem" } }, [
       this.selectElement,
       h(
         "button",
         {
-          style: { fontSize: "10px", padding: "0 4px" },
+          style: { fontSize: "0.75rem", padding: "0 0.25rem" },
           onclick: () => this.editProfiles(),
         },
         ["⚙️"],

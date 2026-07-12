@@ -84,7 +84,7 @@ export function renderSidebar(
         (fileItemsContainer = h(
           "ul",
           {
-            style: "overflow-y: auto; flex: 1; list-style: none; padding: 0; margin: 0;",
+            style: "overflow: auto; flex: 1; list-style: none; padding: 0; margin: 0;",
             id: "file-items-container",
           },
           [],

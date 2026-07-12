@@ -130,13 +130,7 @@ export class ChatView {
     let lastLog: HTMLElement | undefined;
     let lastLogType: "info" | "text" | "think" | "user" | "error" | null = null;
 
-    const aiMsgDiv = h(
-      "div",
-      {
-        style: { marginBottom: "10px", whiteSpace: "pre-wrap" },
-      },
-      [],
-    );
+    const aiMsgDiv = h("div", { style: { whiteSpace: "pre" } }, []);
 
     if (messagesContainer) {
       if (
