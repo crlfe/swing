@@ -3,8 +3,8 @@ import { h } from "./h.ts";
 export function addTab(
   id: string,
   label: string,
-  onSwitch: (fileName: string) => void,
-  onClose: (fileName: string) => void,
+  onSwitch: (id: string) => void,
+  onClose: (id: string) => void,
 ): HTMLElement {
   const btn = h(
     "button",
@@ -42,33 +42,26 @@ export function addTab(
   return container;
 }
 
-export function activateTab(fileName: string): void {
+export function activateTab(id: string): void {
   document.querySelectorAll(".tab-btn").forEach((btn) => btn.classList.remove("active"));
-  const activeBtn = document.getElementById(`btn-${fileName}`);
+  const activeBtn = document.getElementById(`btn-${id}`);
   if (activeBtn) activeBtn.classList.add("active");
 
   document.querySelectorAll(".editor-pane").forEach((pane) => pane.classList.remove("active"));
-  const activePane = document.getElementById(`editor-${fileName}`);
+  const activePane = document.getElementById(`editor-${id}`);
   if (activePane) activePane.classList.add("active");
 }
 
-export function removeTabUI(fileName: string): void {
-  const btn = document.getElementById(`btn-${fileName}`);
-  const container = document.getElementById(`editor-${fileName}`);
+export function removeTabUI(id: string): void {
+  const btn = document.getElementById(`btn-${id}`);
+  const container = document.getElementById(`editor-${id}`);
   if (btn) btn.remove();
   if (container) container.remove();
 }
 
-export function updateTabLabel(oldPath: string, newPath: string, newName: string): void {
-  const tabBtn = document.getElementById(`btn-${oldPath}`);
-  if (tabBtn) {
-    tabBtn.id = `btn-${newPath}`;
-    if (tabBtn.firstChild) {
-      tabBtn.firstChild.textContent = newName;
-    }
-  }
-  const editorPane = document.getElementById(`editor-${oldPath}`);
-  if (editorPane) {
-    editorPane.id = `editor-${newPath}`;
+export function updateTabLabel(id: string, newName: string): void {
+  const tabBtn = document.getElementById(`btn-${id}`);
+  if (tabBtn && tabBtn.firstChild) {
+    tabBtn.firstChild.textContent = newName;
   }
 }

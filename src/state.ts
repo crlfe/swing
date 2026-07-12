@@ -1,40 +1,41 @@
-import { type EditorView, updateEditorContent } from "./editor.ts";
-
-interface AppState {
-  views: Record<string, EditorView>;
-  activeId: string | null;
-
-  setActiveTab(id: string): void;
-  registerView(id: string, view: EditorView): void;
-  unregisterView(id: string): void;
-  getView(id: string): EditorView | undefined;
-  updateViewContent(id: string, content: string): void;
+export interface AppTab {
+  readonly id: string;
+  readonly path: string | undefined;
 }
 
-export const state: AppState = {
-  views: {},
-  activeId: null,
+export class AppState {
+  readonly #tabs = new Map<string, AppTab>();
+  #active: string | null = null;
+  #nextTabId: number = 0;
 
-  setActiveTab(id) {
-    this.activeId = id;
-  },
+  get active(): string | null {
+    return this.#active;
+  }
 
-  registerView(id, view) {
-    this.views[id] = view;
-  },
+  nextTabId(): string {
+    return `t${this.#nextTabId++}`;
+  }
 
-  unregisterView(id) {
-    delete this.views[id];
-  },
+  setActive(id: string): void {
+    this.#active = id;
+  }
 
-  getView(id) {
-    return this.views[id];
-  },
+  getById(id: string): AppTab | undefined {
+    return this.#tabs.get(id);
+  }
 
-  updateViewContent(id, content) {
-    const view = this.getView(id);
-    if (view) {
-      updateEditorContent(view, content);
+  getByPath(path: string): AppTab | undefined {
+    return this.#tabs.values().find((tab) => tab.path && tab.path === path);
+  }
+
+  add(tab: AppTab): void {
+    if (this.#tabs.has(tab.id)) {
+      throw new Error("Tab already registered with this id");
     }
-  },
-};
+    this.#tabs.set(tab.id, tab);
+  }
+
+  delete(id: string): void {
+    this.#tabs.delete(id);
+  }
+}

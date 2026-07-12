@@ -1,11 +1,13 @@
 import { FileTree } from "./data/file-tree.ts";
-import { createEditor } from "./editor.ts";
+import { EditorTab } from "./editor.ts";
 import { getExampleFiles } from "./fs-example.ts";
-import { state } from "./state.ts";
-import { enterRenameMode, renderSidebar, resolvePath } from "./ui-sidebar.ts";
+import { AppState } from "./state.ts";
+import { enterRenameMode, renderSidebar } from "./ui-sidebar.ts";
 import { activateTab, addTab, removeTabUI, updateTabLabel } from "./ui-tabs.ts";
+import { resolvePath } from "./util.ts";
 import { ChatView } from "./view/chat.ts";
 
+const state = new AppState();
 const fs = new FileTree();
 {
   const STORAGE_KEY = "swing_editor_files";
@@ -40,38 +42,39 @@ const fs = new FileTree();
   );
 }
 
-function switchTab(fileName: string): void {
-  state.setActiveTab(fileName);
-  activateTab(fileName);
+function switchTab(id: string): void {
+  state.setActive(id);
+  activateTab(id);
   document.querySelectorAll(".file-item").forEach((item) => {
     const el = item as HTMLElement;
-    el.classList.toggle("active", el.dataset.filename === fileName);
+    el.classList.toggle("active", el.dataset.filename === id);
   });
-  const view = state.getView(fileName);
-  if (view) {
-    view.requestMeasure();
+  const tab = state.getById(id);
+  if (tab instanceof EditorTab) {
+    tab.view.then((view) => view.requestMeasure());
   }
 }
 
-async function handleFileOpen(
-  id: string,
-  options: { label: string; content?: string[]; path?: string },
-): Promise<void> {
+async function handleFileOpen(options: {
+  label: string;
+  content?: string[];
+  path?: string;
+}): Promise<void> {
   const { label, content: initialContent, path } = options;
 
-  if (path && initialContent) {
-    fs.write(path, initialContent);
-  }
-
-  if (!state.getView(id)) {
+  let tab = path !== undefined ? state.getByPath(path) : undefined;
+  if (!tab) {
+    const id = state.nextTabId();
     const container = addTab(id, label, switchTab, () => {
       removeTabUI(id);
-      const view = state.getView(id);
-      if (view) {
-        view.destroy();
-        state.unregisterView(id);
+      const tab = state.getById(id);
+      if (tab) {
+        if (tab instanceof EditorTab) {
+          tab.destroy();
+          state.delete(id);
+        }
       }
-      if (state.activeId === id) {
+      if (state.active === id) {
         const tabs = document.querySelectorAll(".tab-btn");
         if (tabs.length > 0) {
           const firstTab = tabs[0] as HTMLElement;
@@ -80,29 +83,11 @@ async function handleFileOpen(
       }
     });
 
-    const view = await createEditor(
-      id,
-      (path ? fs.read(path) : (initialContent ?? [])).join("\n"),
-      (content: string) => {
-        if (path) {
-          fs.write(path, content.split("\n"));
-        }
-      },
-      container,
-    );
-    state.registerView(id, view);
-
-    if (path) {
-      const unwatch = fs.watch(path, () => {
-        if (!fs.has(path)) {
-          unwatch();
-          return;
-        }
-        state.updateViewContent(id, fs.read(path).join("\n"));
-      });
-    }
+    const content = (path ? fs.read(path) : (initialContent ?? [])).join("\n");
+    tab = new EditorTab(id, path, label, content, container, fs);
+    state.add(tab);
   }
-  switchTab(id);
+  switchTab(tab.id);
 }
 
 function handleRename(li: HTMLElement, path: string): void {
@@ -110,15 +95,15 @@ function handleRename(li: HTMLElement, path: string): void {
     const newPath = resolvePath(oldPath, newValue);
     try {
       fs.move(oldPath, newPath);
-      const view = state.getView(oldPath);
-      if (view) {
-        state.unregisterView(oldPath);
-        state.registerView(newPath, view);
-        updateTabLabel(oldPath, newPath, newPath.split("/").pop() || "");
+      const tab = state.getByPath(oldPath);
+      if (tab instanceof EditorTab) {
+        tab.path = newPath;
+        updateTabLabel(tab.id, newPath.split("/").pop() || "");
         const btn = document.getElementById(`btn-${newPath}`);
         if (btn) btn.onclick = () => switchTab(newPath);
       }
-      if (state.activeId === oldPath) state.setActiveTab(newPath);
+
+      if (state.active === oldPath) state.setActive(newPath);
     } catch (e: any) {
       alert(e.message);
     }
@@ -129,10 +114,12 @@ function handleDelete(path: string): void {
   try {
     fs.delete(path);
     removeTabUI(path);
-    const view = state.getView(path);
-    if (view) {
-      view.destroy();
-      state.unregisterView(path);
+    const tab = state.getById(path);
+    if (tab) {
+      if (tab instanceof EditorTab) {
+        tab.destroy();
+      }
+      state.delete(path);
     }
   } catch (e: any) {
     alert(e.message);

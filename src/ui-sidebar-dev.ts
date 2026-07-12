@@ -30,10 +30,7 @@ async function authenticatedFetch(url: string, options: RequestInit = {}): Promi
 
 export function renderDevModeButtons(
   fs: FileTree,
-  onOpen: (
-    id: string,
-    options: { label: string; content?: string[]; path?: string },
-  ) => Promise<void>,
+  onOpen: (options: { label: string; content?: string[]; path?: string }) => Promise<void>,
 ): HTMLElement[] {
   if (import.meta.env.MODE === "production") return [];
 
@@ -63,7 +60,7 @@ export function renderDevModeButtons(
             if (!res.ok) throw new Error(`Server responded with ${res.status}`);
             const diskTree = nodeFromObject((await res.json()) as RecursiveRecord<string, string>);
             const patch = diffTree(diskTree, fs.getRoot());
-            await onOpen(":diff-source", {
+            await onOpen({
               label: "Diff Source",
               content: formatPatch(patch).split("\n"),
             });

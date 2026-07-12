@@ -2,29 +2,7 @@ import type { FileTree } from "./data/file-tree.ts";
 import type { TreeDir } from "./data/types.ts";
 import { getExampleFiles } from "./fs-example.ts";
 import { h } from "./h.ts";
-import { state } from "./state.ts";
 import { renderDevModeButtons } from "./ui-sidebar-dev.ts";
-
-function resolvePath(currentPath: string, inputPath: string): string {
-  if (inputPath.startsWith("/")) {
-    return inputPath.substring(1);
-  }
-  if (inputPath.startsWith(".")) {
-    const parts = currentPath.split("/");
-    const segments = inputPath.split("/");
-    for (const segment of segments) {
-      if (segment === ".") continue;
-      else if (segment === "..") parts.pop();
-      else parts.push(segment);
-    }
-    return parts.join("/");
-  }
-  if (!inputPath.includes("/")) {
-    const dir = currentPath.substring(0, currentPath.lastIndexOf("/"));
-    return dir ? `${dir}/${inputPath}` : inputPath;
-  }
-  return inputPath;
-}
 
 async function downloadProjectAsZip(fs: FileTree) {
   try {
@@ -60,10 +38,7 @@ async function downloadProjectAsZip(fs: FileTree) {
 
 export function renderSidebar(
   fs: FileTree,
-  onOpen: (
-    id: string,
-    options: { label: string; content?: string[]; path?: string },
-  ) => Promise<void>,
+  onOpen: (options: { label: string; content?: string[]; path?: string }) => Promise<void>,
   onRename: (li: HTMLElement, path: string) => void,
   onDelete: (path: string) => void,
 ): void {
@@ -134,8 +109,7 @@ export function renderSidebar(
         for await (const [path, file] of walk("", [entry])) {
           const text = await file.text();
           fs.write(path, text.split("\n"));
-          state.updateViewContent(path, text);
-          await onOpen(path, { label: path, path });
+          await onOpen({ label: path, path });
         }
         return;
       }
@@ -144,8 +118,7 @@ export function renderSidebar(
       if (file) {
         const text = await file.text();
         fs.write(file.name, text.split("\n"));
-        state.updateViewContent(file.name, text);
-        await onOpen(file.name, { label: file.name, path: file.name });
+        await onOpen({ label: file.name, path: file.name });
       }
 
       item.getAsString((text) => {
@@ -185,7 +158,7 @@ export function renderSidebar(
                 }
               : {
                   "data-filename": path,
-                  onclick: () => onOpen(path, { label: path, path }),
+                  onclick: () => onOpen({ label: path.replace(/^.*\//, ""), path }),
                   ondblclick: (e: Event) => {
                     e.stopPropagation();
                     onRename(li, path);
@@ -217,7 +190,7 @@ export function renderSidebar(
             const path = prompt("Enter file name:");
             if (path) {
               fs.write(path, []);
-              onOpen(path, { label: path, path: path });
+              onOpen({ label: path, path: path });
             }
           },
         },
@@ -280,7 +253,7 @@ export function renderSidebar(
         "button",
         {
           onclick: () => {
-            onOpen(":licenses", {
+            onOpen({
               label: "Licenses",
               content: import.meta.env.LICENSES?.split("\n"),
             });
@@ -302,7 +275,7 @@ export function enterRenameMode(
 ): void {
   const input = h("input", {
     type: "text",
-    value: path,
+    value: path.replace(/^.*\//, ""),
     style: "font-size:12px; width:80px;",
     onkeydown: (e: KeyboardEvent) => {
       if (e.key === "Enter") save();
@@ -327,5 +300,3 @@ export function enterRenameMode(
     }
   }
 }
-
-export { resolvePath };

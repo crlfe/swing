@@ -1,9 +1,10 @@
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
+import type { FileTree } from "./data/file-tree.ts";
+
 export type { EditorView };
 
-// The basicSetup is very large and always required, so start loading it now.
 const basicSetupPromise = import("codemirror").then((m) => m.basicSetup);
 
 const languageModes = {
@@ -29,40 +30,66 @@ const extensionMap: Record<string, keyof typeof languageModes> = {
   yml: "yaml",
 };
 
-export async function createEditor(
-  path: string,
-  content: string,
-  onUpdate: (content: string) => void,
-  container: HTMLElement,
-): Promise<EditorView> {
-  if (typeof content !== "string") throw new TypeError();
+export class EditorTab {
+  public readonly view: Promise<EditorView>;
+  private unwatch?: () => void;
 
-  const extensions: Extension[] = [await basicSetupPromise];
+  constructor(
+    public readonly id: string,
+    public path: string | undefined,
+    public label: string,
+    initialContent: string,
+    container: HTMLElement,
+    private fs: FileTree,
+  ) {
+    const extensions: (Extension | Promise<Extension>)[] = [basicSetupPromise];
 
-  const langKey = extensionMap[path.replace(/.*\./, "")];
-  if (langKey) {
-    extensions.push(await languageModes[langKey]());
+    if (path) {
+      const langKey = extensionMap[path.replace(/.*\./, "")];
+      if (langKey) {
+        extensions.push(languageModes[langKey]());
+      }
+    }
+
+    extensions.push(
+      EditorView.updateListener.of((v) => {
+        if (v.docChanged && path) {
+          fs.write(path, v.state.doc.toString().split("\n"));
+        }
+      }),
+    );
+
+    this.view = Promise.all(extensions).then(
+      (extensions) =>
+        new EditorView({
+          state: EditorState.create({
+            doc: initialContent,
+            extensions,
+          }),
+          parent: container,
+        }),
+    );
+
+    if (path) {
+      this.unwatch = fs.watch(path, () => {
+        if (!fs.has(path)) {
+          this.unwatch!();
+          return;
+        }
+        this.updateContent(fs.read(path).join("\n"));
+      });
+    }
   }
 
-  extensions.push(
-    EditorView.updateListener.of((v) => {
-      if (v.docChanged) {
-        onUpdate(v.state.doc.toString());
-      }
-    }),
-  );
+  public async updateContent(content: string): Promise<void> {
+    const view = await this.view;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: content },
+    });
+  }
 
-  return new EditorView({
-    state: EditorState.create({
-      doc: content,
-      extensions,
-    }),
-    parent: container,
-  });
-}
-
-export function updateEditorContent(view: EditorView, content: string): void {
-  view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: content },
-  });
+  public async destroy(): Promise<void> {
+    this.unwatch?.();
+    (await this.view).destroy();
+  }
 }
