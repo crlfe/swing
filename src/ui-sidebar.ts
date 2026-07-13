@@ -146,7 +146,7 @@ export function renderSidebar(
         const li = h(
           "li",
           {
-            class: "file-item",
+            class: `file-item`,
             style: `padding-left: ${15 + level * 12}px`,
             ...(isDir
               ? {
@@ -268,35 +268,26 @@ export function renderSidebar(
   updateTree();
 }
 
-export function enterRenameMode(
-  li: HTMLElement,
-  path: string,
-  onSave: (path: string, newValue: string) => void,
-): void {
-  const input = h("input", {
-    type: "text",
-    value: path.replace(/^.*\//, ""),
-    style: "font-size:12px; width:80px;",
-    onkeydown: (e: KeyboardEvent) => {
-      if (e.key === "Enter") save();
-      if (e.key === "Escape") {
-        isSaved = true;
-        save();
-      }
-    },
-    onblur: () => save(),
-  }) as HTMLInputElement;
+export async function enterRenameMode(li: HTMLElement, path: string): Promise<string> {
+  const name = path.replace(/^.*\//, "");
 
-  li.replaceChildren(input);
-  input.focus();
+  return new Promise<string>((resolve) => {
+    const input = h("input", {
+      type: "text",
+      value: name,
+      style: "font-size:12px; width:80px;",
+      onkeydown: (e: KeyboardEvent) => {
+        if (e.key === "Enter") resolve(input.value.trim());
+        if (e.key === "Escape") {
+          resolve(path);
+        }
+      },
+      onblur: () => resolve(input.value.trim()),
+    }) as HTMLInputElement;
 
-  let isSaved = false;
-  function save(): void {
-    if (isSaved) return;
-    isSaved = true;
-    const val = input.value.trim();
-    if (val && val !== path) {
-      onSave(path, val);
-    }
-  }
+    li.replaceChildren(input);
+    input.focus();
+  }).finally(() => {
+    li.replaceChildren(h("span", {}, [`📄 ${name}`]));
+  });
 }

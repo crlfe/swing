@@ -1,60 +1,73 @@
 import { FileTree } from "./data/file-tree.ts";
 import { EditorTab } from "./editor.ts";
 import { getExampleFiles } from "./fs-example.ts";
-import { AppState } from "./state.ts";
+import { h } from "./h.ts";
 import { enterRenameMode, renderSidebar } from "./ui-sidebar.ts";
-import { activateTab, addTab, removeTabUI, updateTabLabel } from "./ui-tabs.ts";
 import { resolvePath } from "./util.ts";
 import { ChatView } from "./view/chat.ts";
+import { TabsView } from "./view/tabs.ts";
 
-const state = new AppState();
+const STORAGE_KEY = "swing_editor_files";
+const STORAGE_VERSION = 1;
+
+const tabsView = new TabsView();
 const fs = new FileTree();
-{
-  const STORAGE_KEY = "swing_editor_files";
-  const STORAGE_VERSION = 1;
 
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved);
-      if (parsed.version === STORAGE_VERSION) {
-        fs.fromJSON(parsed.files);
-      } else {
-        console.error("Ignoring incompatible saved project");
-        fs.fromJSON(getExampleFiles());
-      }
-    } catch (e) {
-      console.error("Failed to load files from localStorage", e);
+let nextTabId = 0;
+
+const getTabByPath = (path: string) => {
+  for (const tab of tabsView) {
+    if (tab instanceof EditorTab && tab.path === path) {
+      return tab;
     }
-  } else {
-    fs.fromJSON(getExampleFiles());
   }
+  return undefined;
+};
 
-  fs.watch(
-    "",
-    () => {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ version: STORAGE_VERSION, files: fs.toJSON() }),
-      );
-    },
-    { recursive: true },
-  );
+// --- Persistence ---
+const loadInitialFiles = () => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const { version, files } = JSON.parse(saved);
+      if (version === STORAGE_VERSION) return files;
+      console.error("Ignoring incompatible saved project");
+    }
+  } catch (e) {
+    console.error("Failed to load files from localStorage", e);
+  }
+  return getExampleFiles();
+};
+
+fs.fromJSON(loadInitialFiles());
+
+fs.watch(
+  "",
+  () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ version: STORAGE_VERSION, files: fs.toJSON() }),
+    );
+  },
+  { recursive: true },
+);
+
+// --- UI Initialization ---
+const mainContainer = document.getElementById("main-content");
+if (mainContainer) {
+  mainContainer.replaceChildren(tabsView.view, new ChatView(fs).view);
 }
 
-function switchTab(id: string): void {
-  state.setActive(id);
-  activateTab(id);
-  document.querySelectorAll(".file-item").forEach((item) => {
-    const el = item as HTMLElement;
-    el.classList.toggle("active", el.dataset.filename === id);
+tabsView.addActiveListener((newActive) => {
+  const newPath = newActive instanceof EditorTab ? newActive.path : undefined;
+  document.querySelectorAll(".file-item").forEach((elem) => {
+    if (elem instanceof HTMLElement) {
+      elem.classList.toggle("active", Boolean(newPath) && elem.dataset.filename === newPath);
+    }
   });
-  const tab = state.getById(id);
-  if (tab instanceof EditorTab) {
-    tab.view.then((view) => view.requestMeasure());
-  }
-}
+});
 
+// --- Event Handlers ---
 async function handleFileOpen(options: {
   label: string;
   content?: string[];
@@ -62,48 +75,34 @@ async function handleFileOpen(options: {
 }): Promise<void> {
   const { label, content: initialContent, path } = options;
 
-  let tab = path !== undefined ? state.getByPath(path) : undefined;
+  let tab = path ? getTabByPath(path) : undefined;
   if (!tab) {
-    const id = state.nextTabId();
-    const container = addTab(id, label, switchTab, () => {
-      removeTabUI(id);
-      const tab = state.getById(id);
-      if (tab) {
-        if (tab instanceof EditorTab) {
-          tab.destroy();
-          state.delete(id);
-        }
-      }
-      if (state.active === id) {
-        const tabs = document.querySelectorAll(".tab-btn");
-        if (tabs.length > 0) {
-          const firstTab = tabs[0] as HTMLElement;
-          switchTab(firstTab.id.replace("btn-", ""));
-        }
-      }
-    });
+    const id = `t${nextTabId++}`;
+    const container = h("div", { class: "editor-pane" });
+    const fileContent = (path ? fs.read(path) : (initialContent ?? [])).join("\n");
 
-    const content = (path ? fs.read(path) : (initialContent ?? [])).join("\n");
-    tab = new EditorTab(id, path, label, content, container, fs);
-    state.add(tab);
+    tab = new EditorTab(id, path, label, fileContent, container, fs);
+    tabsView.push(tab);
   }
-  switchTab(tab.id);
+  tabsView.activate(tab.id);
 }
 
 function handleRename(li: HTMLElement, path: string): void {
-  enterRenameMode(li, path, (oldPath: string, newValue: string) => {
-    const newPath = resolvePath(oldPath, newValue);
+  enterRenameMode(li, path).then((newValue) => {
+    const newPath = resolvePath(path, newValue);
     try {
-      fs.move(oldPath, newPath);
-      const tab = state.getByPath(oldPath);
+      fs.move(path, newPath);
+      const tab = getTabByPath(path);
       if (tab instanceof EditorTab) {
         tab.path = newPath;
-        updateTabLabel(tab.id, newPath.split("/").pop() || "");
-        const btn = document.getElementById(`btn-${newPath}`);
-        if (btn) btn.onclick = () => switchTab(newPath);
+        tab.label = newPath.split("/").pop() || "";
+        tabsView.updateLabel(tab.id);
       }
-
-      if (state.active === oldPath) state.setActive(newPath);
+      document.querySelectorAll(".file-item").forEach((elem) => {
+        if (elem instanceof HTMLElement) {
+          elem.classList.toggle("active", Boolean(newPath) && elem.dataset.filename === newPath);
+        }
+      });
     } catch (e: any) {
       alert(e.message);
     }
@@ -113,24 +112,14 @@ function handleRename(li: HTMLElement, path: string): void {
 function handleDelete(path: string): void {
   try {
     fs.delete(path);
-    removeTabUI(path);
-    const tab = state.getById(path);
+    const tab = getTabByPath(path);
     if (tab) {
-      if (tab instanceof EditorTab) {
-        tab.destroy();
-      }
-      state.delete(path);
+      if (tab instanceof EditorTab) tab.close();
+      tabsView.remove(tab.id);
     }
   } catch (e: any) {
     alert(e.message);
   }
 }
 
-function initSidebar(): void {
-  renderSidebar(fs, handleFileOpen, handleRename, handleDelete);
-}
-
-initSidebar();
-
-const chatView = new ChatView(fs);
-document.getElementById("main-content")?.appendChild(chatView.view);
+renderSidebar(fs, handleFileOpen, handleRename, handleDelete);

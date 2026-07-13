@@ -70,7 +70,11 @@ body {
 }
 
 /* Tab Bar Styling */
-.tab-bar {
+.tabs {
+  display: grid;
+  grid: auto 1fr / 1fr;
+}
+.tabs > nav {
   display: flex;
   gap: 0;
   background: #eee;
@@ -78,7 +82,14 @@ body {
   flex-shrink: 0;
   border-bottom: 1px solid #ccc;
 }
-.tab-btn {
+.tabs > div {
+  display: grid;
+  grid: 1fr / 1fr;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tabs-button {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -92,12 +103,12 @@ body {
   color: #666;
   font-weight: bold;
 }
-.tab-btn.active {
+.tabs-button.tabs-active {
   background: white;
   color: #333;
 }
 
-.tab-close-btn {
+.tabs-close {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -112,21 +123,11 @@ body {
   line-height: 1;
   margin-left: auto;
 }
-.tab-close-btn:hover {
+.tabs-close:hover {
   background: #bbb;
   color: #000;
 }
 
-.editor-pane {
-  display: none;
-  min-width: 0;
-  min-height: 0;
-}
-.editor-pane.active {
-  display: grid;
-  grid: 1fr / 1fr;
-  place-items: stretch;
-}
 .cm-editor {
   min-height: 0;
   min-width: 0;

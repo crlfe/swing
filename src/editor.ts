@@ -2,6 +2,7 @@ import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 import type { FileTree } from "./data/file-tree.ts";
+import type { TabView } from "./view/tabs.ts";
 
 export type { EditorView };
 
@@ -30,9 +31,11 @@ const extensionMap: Record<string, keyof typeof languageModes> = {
   yml: "yaml",
 };
 
-export class EditorTab {
-  public readonly view: Promise<EditorView>;
-  private unwatch?: () => void;
+export class EditorTab implements TabView {
+  #container: HTMLElement;
+  #unwatch?: () => void;
+
+  public readonly viewPromise: Promise<EditorView>;
 
   constructor(
     public readonly id: string,
@@ -42,6 +45,8 @@ export class EditorTab {
     container: HTMLElement,
     private fs: FileTree,
   ) {
+    this.#container = container;
+
     const extensions: (Extension | Promise<Extension>)[] = [basicSetupPromise];
 
     if (path) {
@@ -59,7 +64,7 @@ export class EditorTab {
       }),
     );
 
-    this.view = Promise.all(extensions).then(
+    this.viewPromise = Promise.all(extensions).then(
       (extensions) =>
         new EditorView({
           state: EditorState.create({
@@ -71,25 +76,32 @@ export class EditorTab {
     );
 
     if (path) {
-      this.unwatch = fs.watch(path, () => {
+      this.#unwatch = fs.watch(path, () => {
         if (!fs.has(path)) {
-          this.unwatch!();
+          this.#unwatch!();
           return;
         }
-        this.updateContent(fs.read(path).join("\n"));
+
+        const content = fs.read(path).join("\n");
+        this.viewPromise.then((view) => {
+          view.dispatch({
+            changes: { from: 0, to: view.state.doc.length, insert: content },
+          });
+        });
       });
     }
   }
 
-  public async updateContent(content: string): Promise<void> {
-    const view = await this.view;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: content },
-    });
+  get view() {
+    return this.#container;
   }
 
-  public async destroy(): Promise<void> {
-    this.unwatch?.();
-    (await this.view).destroy();
+  shown() {
+    this.viewPromise.then((v) => v.requestMeasure());
+  }
+
+  close() {
+    this.#unwatch?.();
+    this.viewPromise.then((view) => view.destroy());
   }
 }
