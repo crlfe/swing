@@ -2,6 +2,7 @@
 
 import NodeFS from "node:fs";
 
+import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vite";
 
 import pluginDevFs from "./vite-plugin-dev-fs.ts";
@@ -40,7 +41,35 @@ export default defineConfig({
     strictPort: true,
   },
   test: {
-    includeSource: ["src/**/*.ts"],
+    coverage: {
+      provider: "v8",
+    },
+    projects: [
+      {
+        test: {
+          name: "unit",
+
+          environment: "node",
+          include: ["src/**/*.{test,spec}.ts"],
+          includeSource: ["src/**/*.ts"],
+        },
+      },
+      {
+        test: {
+          name: "e2e",
+          browser: {
+            enabled: true,
+            provider: playwright(),
+            headless: true,
+            instances: [{ browser: "chromium" }],
+
+            // TODO: Figure out how to .gitignore the failures.
+            screenshotFailures: false,
+          },
+          include: ["tests/e2e/**/*.{test,spec}.ts"],
+        },
+      },
+    ],
   },
 });
 

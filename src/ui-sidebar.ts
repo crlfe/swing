@@ -36,100 +36,114 @@ async function downloadProjectAsZip(fs: FileTree) {
   }
 }
 
-export function renderSidebar(
-  fs: FileTree,
-  onOpen: (options: { label: string; content?: string[]; path?: string }) => Promise<void>,
-  onRename: (li: HTMLElement, path: string) => void,
-  onDelete: (path: string) => void,
-): void {
-  const sidebar = document.getElementById("sidebar");
-  if (!sidebar) return;
+export class SidebarView {
+  readonly view: HTMLElement;
+  private fileItemsContainer: HTMLUListElement;
+  private actionsContainer: HTMLDivElement;
+  private collapsedDirs = new Set<string>();
 
-  let list: HTMLElement;
-  let fileItemsContainer: HTMLUListElement;
-  sidebar.replaceChildren(
-    h("div", { id: "sidebar-header" }, ["Files"]),
-    (list = h(
+  constructor(
+    private fs: FileTree,
+    private onOpen: (options: {
+      label: string;
+      content?: string[];
+      path?: string;
+    }) => Promise<void>,
+    private onRename: (li: HTMLElement, path: string) => void,
+    private onDelete: (path: string) => void,
+  ) {
+    this.fileItemsContainer = h(
+      "ul",
+      {
+        style: "overflow: auto; flex: 1; list-style: none; padding: 0; margin: 0;",
+        id: "file-items-container",
+      },
+      [],
+    );
+
+    this.actionsContainer = h("div", { id: "sidebar-actions" });
+
+    const list = h(
       "div",
       {
         class: "file-list",
         style: { display: "flex", "flex-direction": "column", height: "100%", overflow: "hidden" },
       },
-      [
-        (fileItemsContainer = h(
-          "ul",
-          {
-            style: "overflow: auto; flex: 1; list-style: none; padding: 0; margin: 0;",
-            id: "file-items-container",
-          },
-          [],
-        )),
-      ],
-    )),
-    h("div", { id: "sidebar-actions" }),
-  );
+      [this.fileItemsContainer],
+    );
 
-  list.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    list.classList.add("drag-over");
-  });
+    this.view = h("div", { id: "sidebar" }, [
+      h("div", { id: "sidebar-header" }, ["Files"]),
+      list,
+      this.actionsContainer,
+    ]);
 
-  list.addEventListener("dragleave", () => {
-    list.classList.remove("drag-over");
-  });
+    this.setupDragAndDrop(list);
+    this.fs.watch("", () => this.#render(), { recursive: true });
+    this.#render();
+  }
 
-  list.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    list.classList.remove("drag-over");
+  private setupDragAndDrop(list: HTMLElement) {
+    list.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      list.classList.add("drag-over");
+    });
 
-    const items = e.dataTransfer?.items;
-    if (!items) return;
+    list.addEventListener("dragleave", () => {
+      list.classList.remove("drag-over");
+    });
 
-    for (const item of items) {
-      const entry = item.webkitGetAsEntry?.();
-      if (entry) {
-        async function* walk(
-          prefix: string,
-          entries: FileSystemEntry[],
-        ): AsyncGenerator<[string, File]> {
-          for (const entry of entries) {
-            if (entry.isDirectory) {
-              const children = await new Promise<FileSystemEntry[]>((resolve, reject) => {
-                (entry as FileSystemDirectoryEntry).createReader().readEntries(resolve, reject);
-              });
-              yield* walk(`${prefix}${entry.name}/`, children);
-            } else {
-              const file = await new Promise<File>((resolve, reject) => {
-                (entry as FileSystemFileEntry).file(resolve, reject);
-              });
-              yield [prefix + file.name, file];
+    list.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      list.classList.remove("drag-over");
+
+      const items = e.dataTransfer?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry?.();
+        if (entry) {
+          async function* walk(
+            prefix: string,
+            entries: FileSystemEntry[],
+          ): AsyncGenerator<[string, File]> {
+            for (const entry of entries) {
+              if (entry.isDirectory) {
+                const children = await new Promise<FileSystemEntry[]>((resolve, reject) => {
+                  (entry as FileSystemDirectoryEntry).createReader().readEntries(resolve, reject);
+                });
+                yield* walk(`${prefix}${entry.name}/`, children);
+              } else {
+                const file = await new Promise<File>((resolve, reject) => {
+                  (entry as FileSystemFileEntry).file(resolve, reject);
+                });
+                yield [prefix + file.name, file];
+              }
             }
           }
+          for await (const [path, file] of walk("", [entry])) {
+            const text = await file.text();
+            this.fs.write(path, text.split("\n"));
+            await this.onOpen({ label: path, path });
+          }
+          return;
         }
-        for await (const [path, file] of walk("", [entry])) {
+
+        const file = item.getAsFile();
+        if (file) {
           const text = await file.text();
-          fs.write(path, text.split("\n"));
-          await onOpen({ label: path, path });
+          this.fs.write(file.name, text.split("\n"));
+          await this.onOpen({ label: file.name, path: file.name });
         }
-        return;
+
+        item.getAsString((text) => {
+          console.log("TODO: Create untitled file for", text);
+        });
       }
+    });
+  }
 
-      const file = item.getAsFile();
-      if (file) {
-        const text = await file.text();
-        fs.write(file.name, text.split("\n"));
-        await onOpen({ label: file.name, path: file.name });
-      }
-
-      item.getAsString((text) => {
-        console.log("TODO: Create untitled file for", text);
-      });
-    }
-  });
-
-  const collapsedDirs = new Set<string>();
-
-  const updateTree = () => {
+  #render(): void {
     const renderTree = (node: TreeDir, currentPath = "", level = 0): void => {
       const entries = Array.from(node.children.entries());
       entries.sort(([aName, aChild], [bName, bChild]) => {
@@ -141,7 +155,7 @@ export function renderSidebar(
       entries.forEach(([name, child]) => {
         const path = currentPath ? `${currentPath}/${name}` : name;
         const isDir = child.type === "dir";
-        const isCollapsed = isDir && collapsedDirs.has(path);
+        const isCollapsed = isDir && this.collapsedDirs.has(path);
 
         const li = h(
           "li",
@@ -151,46 +165,43 @@ export function renderSidebar(
             ...(isDir
               ? {
                   onclick: () => {
-                    if (collapsedDirs.has(path)) collapsedDirs.delete(path);
-                    else collapsedDirs.add(path);
-                    updateTree();
+                    if (this.collapsedDirs.has(path)) this.collapsedDirs.delete(path);
+                    else this.collapsedDirs.add(path);
+                    this.#render();
                   },
                 }
               : {
                   "data-filename": path,
-                  onclick: () => onOpen({ label: path.replace(/^.*\//, ""), path }),
+                  onclick: () => this.onOpen({ label: path.replace(/^.*\//, ""), path }),
                   ondblclick: (e: Event) => {
                     e.stopPropagation();
-                    onRename(li, path);
+                    this.onRename(li, path);
                   },
                 }),
           },
           [h("span", {}, [(isDir ? (isCollapsed ? "📁 " : "📂 ") : "📄 ") + name])],
         );
 
-        fileItemsContainer.appendChild(li);
+        this.fileItemsContainer.appendChild(li);
         if (isDir && !isCollapsed) renderTree(child, path, level + 1);
       });
     };
 
-    fileItemsContainer.replaceChildren();
-    renderTree(fs.getRoot());
+    this.fileItemsContainer.replaceChildren();
+    renderTree(this.fs.getRoot());
 
-    const actions = document.getElementById("sidebar-actions") as HTMLDivElement;
-    if (!actions) return;
-
-    actions.style =
+    this.actionsContainer.style =
       "margin-top:auto; display:flex; flex-direction:column; gap:0.5em; padding:0.5em;";
 
-    actions.replaceChildren(
+    this.actionsContainer.replaceChildren(
       h(
         "button",
         {
           onclick: () => {
             const path = prompt("Enter file name:");
             if (path) {
-              fs.write(path, []);
-              onOpen({ label: path, path: path });
+              this.fs.write(path, []);
+              this.onOpen({ label: path, path: path });
             }
           },
         },
@@ -203,7 +214,7 @@ export function renderSidebar(
             const activeItem = document.querySelector(".file-item.active") as HTMLElement;
             if (!activeItem) return alert("Please select a file first");
             const path = activeItem.dataset.filename;
-            if (path && confirm(`Are you sure you want to delete ${path}?`)) onDelete(path);
+            if (path && confirm(`Are you sure you want to delete ${path}?`)) this.onDelete(path);
           },
         },
         ["Delete Selected"],
@@ -211,12 +222,12 @@ export function renderSidebar(
       h(
         "button",
         {
-          onclick: () => downloadProjectAsZip(fs),
+          onclick: () => downloadProjectAsZip(this.fs),
         },
         ["Download Project (.zip)"],
       ),
       h("div", { style: "height: 0.5em" }),
-      ...renderDevModeButtons(fs, onOpen),
+      ...renderDevModeButtons(this.fs, this.onOpen),
       h(
         "button",
         {
@@ -226,7 +237,7 @@ export function renderSidebar(
                 "Are you sure you want to reset the project? All current changes will be lost.",
               )
             ) {
-              fs.fromJSON(getExampleFiles());
+              this.fs.fromJSON(getExampleFiles());
               location.reload();
             }
           },
@@ -253,7 +264,7 @@ export function renderSidebar(
         "button",
         {
           onclick: () => {
-            onOpen({
+            this.onOpen({
               label: "Licenses",
               content: import.meta.env.LICENSES?.split("\n"),
             });
@@ -262,10 +273,7 @@ export function renderSidebar(
         ["Show Licenses"],
       ),
     );
-  };
-
-  fs.watch("", updateTree, { recursive: true });
-  updateTree();
+  }
 }
 
 export async function enterRenameMode(li: HTMLElement, path: string): Promise<string> {
@@ -286,7 +294,7 @@ export async function enterRenameMode(li: HTMLElement, path: string): Promise<st
     }) as HTMLInputElement;
 
     li.replaceChildren(input);
-    input.focus();
+    input.select();
   }).finally(() => {
     li.replaceChildren(h("span", {}, [`📄 ${name}`]));
   });

@@ -26,11 +26,13 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
+    "@vitest/browser-playwright": "^4.1.10",
+    "@vitest/coverage-v8": "^4.1.10",
     "oxfmt": "^0.49.0",
     "oxlint": "^1.64.0",
     "typescript": "^7.0.1-rc",
     "vite": "^8.1.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   },
   "packageManager": "pnpm@10.33.4",
   "minimumReleaseAge": 10080
