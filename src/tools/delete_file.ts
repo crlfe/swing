@@ -2,6 +2,7 @@ import { type Tool } from "./types.ts";
 
 interface DeleteFileArgs {
   path: string;
+  recursive?: boolean;
 }
 
 const deleteFileTool: Tool = {
@@ -14,20 +15,24 @@ const deleteFileTool: Tool = {
         type: "object",
         properties: {
           path: { type: "string", description: "The path to the file to delete" },
+          recursive: {
+            type: "boolean",
+            description: "If true, also delete non-empty directories. Default false.",
+          },
         },
         required: ["path"],
       },
     },
   },
   execute: async (args, { logInfo, fs }) => {
-    const { path } = args as DeleteFileArgs;
+    const { path, recursive } = args as DeleteFileArgs;
     if (typeof path !== "string") {
       throw new Error("Argument 'path' must be a string");
     }
     if (logInfo) {
       logInfo(`Deleting file: ${path}`);
     }
-    fs.delete(path);
+    fs.delete(path, { recursive: recursive === true });
     return `deleted ${path}`;
   },
 };

@@ -1,13 +1,11 @@
 import type { ChatContext } from "./chat/context.ts";
 import type { ChatCompletionChunk, Message, ToolCall } from "./chat/types.ts";
 import type { FileTree } from "./data/file-tree.ts";
-import appendLinesTool from "./tools/append_lines.ts";
 import deleteFileTool from "./tools/delete_file.ts";
-import insertLinesTool from "./tools/insert_lines.ts";
+import editLinesTool from "./tools/edit_lines.ts";
 import listFilesTool from "./tools/list_files.ts";
 import moveFileTool from "./tools/move_file.ts";
 import readFileTool from "./tools/read_file.ts";
-import replaceLinesTool from "./tools/replace_lines.ts";
 import searchFilesTool from "./tools/search_files.ts";
 import type { Tool } from "./tools/types.ts";
 import writeFileTool from "./tools/write_file.ts";
@@ -31,9 +29,7 @@ const toolRegistry: Record<string, Tool> = {
   [listFilesTool.definition.function.name]: listFilesTool,
   [readFileTool.definition.function.name]: readFileTool,
   [searchFilesTool.definition.function.name]: searchFilesTool,
-  [replaceLinesTool.definition.function.name]: replaceLinesTool,
-  [appendLinesTool.definition.function.name]: appendLinesTool,
-  [insertLinesTool.definition.function.name]: insertLinesTool,
+  [editLinesTool.definition.function.name]: editLinesTool,
   [writeFileTool.definition.function.name]: writeFileTool,
   [moveFileTool.definition.function.name]: moveFileTool,
   [deleteFileTool.definition.function.name]: deleteFileTool,
@@ -100,7 +96,11 @@ export async function sendMessageStream(config: ChatConfig) {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      throw new Error(
+        errorData.error
+          ? JSON.stringify(errorData.error)
+          : `HTTP error! status: ${response.status}`,
+      );
     }
 
     if (!streamEnabled) {

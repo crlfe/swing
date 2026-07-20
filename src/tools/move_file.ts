@@ -29,11 +29,14 @@ const moveFileTool: Tool = {
     if (logInfo) {
       logInfo(`Moving file from ${oldPath} to ${newPath}`);
     }
-    if (fs.has(newPath)) {
+    const overwrote = fs.has(newPath);
+    if (overwrote && fs.getNode(newPath).type !== "blob") {
       throw new Error("Destination already exists");
     }
     fs.move(oldPath, newPath);
-    return `moved ${oldPath} to ${newPath}`;
+    return overwrote
+      ? `moved ${oldPath} to ${newPath} (overwrote)`
+      : `moved ${oldPath} to ${newPath} (new)`;
   },
 };
 

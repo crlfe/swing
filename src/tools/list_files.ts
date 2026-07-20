@@ -25,12 +25,7 @@ const listFilesTool: Tool = {
     if (logInfo) {
       logInfo(`Listing files: ${args.path}`);
     }
-    const normalizedPath = args.path.replace(/^\//, "");
-    const startNode = fs.getNode(normalizedPath);
-    if (!startNode) {
-      throw new Error(`Path not found: ${args.path}`);
-    }
-
+    const startNode = fs.getNode(args.path);
     if (startNode.type !== "dir") {
       throw new Error(`Path is not a directory: ${args.path}`);
     }
@@ -42,9 +37,9 @@ const listFilesTool: Tool = {
     );
 
     if (!children.length) {
-      return `listed empty directory ${args.path}`;
+      return `listed ${args.path} (empty directory)`;
     } else {
-      return `listed ${args.path}\n${children.join("\n")}\n`;
+      return `listed ${args.path} (${children.length} files found)\n${children.sort().join("\n")}\n`;
     }
   },
 };
