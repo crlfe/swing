@@ -84,9 +84,11 @@ export class EditorTab implements TabView {
 
         const content = fs.read(path).join("\n");
         this.viewPromise.then((view) => {
-          view.dispatch({
-            changes: { from: 0, to: view.state.doc.length, insert: content },
-          });
+          if (view.state.doc.toString() !== content) {
+            view.dispatch({
+              changes: { from: 0, to: view.state.doc.length, insert: content },
+            });
+          }
         });
       });
     }
