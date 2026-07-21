@@ -39,6 +39,9 @@ export default defineConfig({
   },
   server: {
     strictPort: true,
+    watch: {
+      ignored: "**/*.test.ts",
+    },
   },
   test: {
     coverage: {
