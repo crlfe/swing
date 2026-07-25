@@ -24,13 +24,10 @@ const deleteFileTool: Tool = {
       },
     },
   },
-  execute: async (args, { logInfo, fs }) => {
+  execute: async (args, { fs }) => {
     const { path, recursive } = args as DeleteFileArgs;
     if (typeof path !== "string") {
       throw new Error("Argument 'path' must be a string");
-    }
-    if (logInfo) {
-      logInfo(`Deleting file: ${path}`);
     }
     fs.delete(path, { recursive: recursive === true });
     return `deleted ${path}`;

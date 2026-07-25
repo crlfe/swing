@@ -47,10 +47,13 @@ async function executeTools(toolCalls: ToolCall[], config: ChatConfig): Promise<
     const args = JSON.parse(toolCall.function.arguments);
     let result;
     try {
-      result = await tool.execute(args, config, toolCall.id);
-      result = `OK ${result}`;
+      const rawResult = await tool.execute(args, config, toolCall.id);
+      result = `OK ${rawResult}`;
+      const firstLine = rawResult.split('\n')[0];
+      if (firstLine) {config.logInfo(firstLine);}
     } catch (e: any) {
       result = `ERR ${e.message}`;
+      config.logInfo(e.message);
     }
     toolResults.push({
       role: "tool",

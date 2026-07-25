@@ -21,13 +21,10 @@ const moveFileTool: Tool = {
       },
     },
   },
-  execute: async (args, { logInfo, fs }) => {
+  execute: async (args, { fs }) => {
     const { oldPath, newPath } = args as MoveFileArgs;
     if (typeof oldPath !== "string" || typeof newPath !== "string") {
       throw new Error("Arguments 'oldPath' and 'newPath' must be strings");
-    }
-    if (logInfo) {
-      logInfo(`Moving file from ${oldPath} to ${newPath}`);
     }
     const overwrote = fs.has(newPath);
     if (overwrote && fs.getNode(newPath).type !== "blob") {

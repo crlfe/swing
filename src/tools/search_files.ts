@@ -27,15 +27,12 @@ const searchFilesTool: Tool = {
       },
     },
   },
-  execute: async (args, { logInfo, fs }) => {
+  execute: async (args, { fs }) => {
     const { query, maxResults } = args as SearchFilesArgs;
     if (typeof query !== "string") {
       throw new Error("Argument 'query' must be a string");
     }
     const limit = typeof maxResults === "number" && maxResults > 0 ? maxResults : MAX_RESULTS;
-    if (logInfo) {
-      logInfo(`Searching files: ${query}`);
-    }
 
     const results: string[] = [];
     fs.walk("", (path, node) => {

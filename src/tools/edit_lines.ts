@@ -37,7 +37,7 @@ const editLinesTool: Tool = {
       },
     },
   },
-  execute: async (args, { logInfo, fs }) => {
+  execute: async (args, { fs }) => {
     const { path, search, content, mode } = args as EditLinesArgs;
     if (typeof path !== "string") {
       throw new Error("Argument 'path' must be a string");
@@ -79,9 +79,6 @@ const editLinesTool: Tool = {
       throw new Error("Argument 'mode' must be 'replace', 'before', or 'after'");
     }
 
-    if (logInfo) {
-      logInfo(`Editing lines in: ${path} (mode=${resolvedMode})`);
-    }
     fs.write(path, newContent);
     return result;
   },

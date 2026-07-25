@@ -266,4 +266,23 @@ describe("ChatContext persistence", () => {
     ctx.addMessage({ role: "user", content: "ephemeral" });
     expect(ctx.getMessages()).toEqual([{ role: "user", content: "ephemeral" }]);
   });
+  it("should save and reload an identical list of messages", () => {
+    const messages: Message[] = [
+      { role: "user", content: "Hello!" },
+      {
+        role: "assistant",
+        content: "I can help. Let me check the files.",
+        tool_calls: [{ id: "call_1", type: "function", function: { name: "list_files", arguments: '{"path": "."}' } }],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "file1.ts, file2.ts" },
+      { role: "assistant", content: "I see the files." },
+    ];
+
+    const ctx1 = new ChatContext({ storageKey });
+    messages.forEach((msg) => ctx1.addMessage(msg));
+
+    const ctx2 = new ChatContext({ storageKey });
+    expect(ctx2.getMessages()).toEqual(messages);
+  });
+
 });

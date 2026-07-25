@@ -32,7 +32,7 @@ const readFileTool: Tool = {
       },
     },
   },
-  execute: async (args, { logInfo, fs }) => {
+  execute: async (args, { fs }) => {
     const { path, startLine, endLine } = args as ReadFileArgs;
     if (typeof path !== "string") {
       throw new Error("Argument 'path' must be a string");
@@ -42,9 +42,6 @@ const readFileTool: Tool = {
       (endLine !== undefined && !Number.isInteger(endLine))
     ) {
       throw new Error("Arguments 'startLine' and 'endLine' must be integers");
-    }
-    if (logInfo) {
-      logInfo(`Reading file: ${path}`);
     }
 
     const content = fs.read(path);
@@ -72,7 +69,7 @@ const readFileTool: Tool = {
     }
 
     const wasPartial = from > 1 || to < totalLines;
-    const rangeSuffix = wasPartial ? ` (lines ${from}-${to} of ${totalLines})` : "";
+    const rangeSuffix = wasPartial ? ` (lines ${from}-${to} of ${totalLines})` : ` (${totalLines} line${totalLines > 1 ? "s" : ""})`;
     return `read ${path}${rangeSuffix}\n${contentString}`;
   },
 };

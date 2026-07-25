@@ -33,16 +33,13 @@ const writeFileTool: Tool = {
       },
     },
   },
-  execute: async (args, { fs, logInfo }) => {
+  execute: async (args, { fs }) => {
     const { path, content, ifExists } = args as WriteFileArgs;
     if (typeof path !== "string" || typeof content !== "string") {
       throw new Error("Arguments 'path' and 'content' must be strings");
     }
     if (ifExists !== undefined && !["overwrite", "error", "append"].includes(ifExists)) {
       throw new Error("Argument 'ifExists' must be 'overwrite', 'error', or 'append'");
-    }
-    if (logInfo) {
-      logInfo(`Writing file: ${path}`);
     }
 
     const existed = fs.has(path);

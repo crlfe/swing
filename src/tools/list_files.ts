@@ -18,12 +18,9 @@ const listFilesTool: Tool = {
       },
     },
   },
-  execute: async (args: { path: string }, { logInfo, fs }) => {
+  execute: async (args: { path: string }, { fs }) => {
     if (typeof args.path !== "string") {
       throw new Error("Argument 'path' must be a string");
-    }
-    if (logInfo) {
-      logInfo(`Listing files: ${args.path}`);
     }
     const startNode = fs.getNode(args.path);
     if (startNode.type !== "dir") {

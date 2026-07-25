@@ -26,7 +26,7 @@ describe("read_file", () => {
   it("should read a file's content", async () => {
     fs.write("test.txt", ["hello world"]);
     const result = await readFileTool.execute({ path: "test.txt" }, config);
-    expect(result).toContain("read test.txt\nhello world");
+    expect(result).toContain("read test.txt (1 line)\nhello world");
   });
 
   it("should read a line range", async () => {
