@@ -1,8 +1,29 @@
 import type { Message } from "./types.ts";
 
+const CURRENT_VERSION = 1;
+
+interface ChatContextOptions {
+  storageKey?: string;
+}
+
 /** Manages the state and history of a chat conversation. */
 export class ChatContext {
   private messages: Message[] = [];
+  private readonly storageKey: string | undefined;
+
+  /**
+   * Creates a new ChatContext.
+   *
+   * @param options - Optional configuration. When `storageKey` is provided, messages are loaded
+   *   from and saved to local storage automatically.
+   */
+  constructor(options?: ChatContextOptions) {
+    this.storageKey = options?.storageKey;
+
+    if (this.storageKey) {
+      this.#load();
+    }
+  }
 
   /**
    * Adds a message to the conversation history.
@@ -11,8 +32,19 @@ export class ChatContext {
    */
   addMessage(message: Message): void {
     this.messages.push(message);
+    this.#save();
   }
 
+  /** Returns true if there are no messages in the history. */
+  isEmpty(): boolean {
+    return this.messages.length === 0;
+  }
+
+  /**
+   * Returns a copy of the current history of messages.
+   *
+   * @returns An array of messages in the conversation.
+   */
   /**
    * Returns a copy of the current history of messages.
    *
@@ -25,6 +57,7 @@ export class ChatContext {
   /** Clears all messages from the history. */
   clear(): void {
     this.messages = [];
+    this.#save();
   }
 
   /**
@@ -45,7 +78,11 @@ export class ChatContext {
       }
       return true;
     });
-    return this.messages.length < length;
+    const changed = this.messages.length < length;
+    if (changed) {
+      this.#save();
+    }
+    return changed;
   }
 
   /**
@@ -77,6 +114,35 @@ export class ChatContext {
       tool_call_id: toolCallId,
       content: content,
     });
+    this.#save();
     return true;
+  }
+
+  /** Loads messages from local storage, if a storage key is configured. */
+  #load(): void {
+    if (!this.storageKey) return;
+    try {
+      const raw = localStorage.getItem(this.storageKey);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data?.version === CURRENT_VERSION && Array.isArray(data?.messages)) {
+        this.messages = data.messages;
+      }
+    } catch {
+      // Ignore corrupted or incompatible stored data.
+    }
+  }
+
+  /** Saves messages to local storage, if a storage key is configured. */
+  #save(): void {
+    if (!this.storageKey) return;
+    try {
+      localStorage.setItem(
+        this.storageKey,
+        JSON.stringify({ version: CURRENT_VERSION, messages: this.messages }),
+      );
+    } catch {
+      // Ignore storage errors (e.g. quota exceeded).
+    }
   }
 }

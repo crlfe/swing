@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 
 import { ChatContext } from "./context.ts";
 import type { Message } from "./types.ts";
@@ -152,5 +152,118 @@ describe("ChatContext", () => {
 
   it("should return undefined for a non-existent tool call ID", () => {
     expect(context.getToolResult("non-existent")).toBeUndefined();
+  });
+});
+
+// --- Persistence tests ---
+
+describe("ChatContext persistence", () => {
+  const storageKey = "test-chat-context";
+  const mockStore = new Map<string, string>();
+
+  beforeEach(() => {
+    mockStore.clear();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn((key: string) => mockStore.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        mockStore.set(key, value);
+      }),
+      removeItem: vi.fn((key: string) => {
+        mockStore.delete(key);
+      }),
+      clear: vi.fn(() => {
+        mockStore.clear();
+      }),
+    });
+  });
+
+  it("should not persist when no storage key is provided", () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: "user", content: "hi" });
+    expect(localStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("should save messages to local storage after addMessage", () => {
+    const ctx = new ChatContext({ storageKey });
+    ctx.addMessage({ role: "user", content: "hello" });
+
+    const stored = JSON.parse(localStorage.getItem(storageKey) as string);
+    expect(stored.version).toBe(1);
+    expect(stored.messages).toHaveLength(1);
+    expect(stored.messages[0]).toEqual({ role: "user", content: "hello" });
+  });
+
+  it("should save messages to local storage after clear", () => {
+    const ctx = new ChatContext({ storageKey });
+    ctx.addMessage({ role: "user", content: "hello" });
+    ctx.clear();
+
+    const stored = JSON.parse(localStorage.getItem(storageKey) as string);
+    expect(stored.messages).toEqual([]);
+  });
+
+  it("should save messages to local storage after removeToolCall", () => {
+    const ctx = new ChatContext({ storageKey });
+    ctx.addMessage({
+      role: "assistant",
+      content: "",
+      tool_calls: [{ id: "c1", type: "function", function: { name: "test", arguments: "{}" } }],
+    });
+    ctx.removeToolCall("c1");
+
+    const stored = JSON.parse(localStorage.getItem(storageKey) as string);
+    expect(stored.messages).toEqual([]);
+  });
+
+  it("should save messages to local storage after updateToolResult", () => {
+    const ctx = new ChatContext({ storageKey });
+    ctx.addMessage({
+      role: "assistant",
+      content: "Hi",
+      tool_calls: [{ id: "c1", type: "function", function: { name: "test", arguments: "{}" } }],
+    });
+    ctx.addMessage({ role: "tool", tool_call_id: "c1", content: "old" });
+    ctx.updateToolResult("c1", "result");
+
+    const stored = JSON.parse(localStorage.getItem(storageKey) as string);
+    expect(stored.messages).toHaveLength(2);
+  });
+
+  it("should load messages from local storage on construction", () => {
+    const savedMessages: Message[] = [{ role: "user", content: "restored" }];
+    localStorage.setItem(storageKey, JSON.stringify({ version: 1, messages: savedMessages }));
+
+    const ctx = new ChatContext({ storageKey });
+    expect(ctx.getMessages()).toEqual(savedMessages);
+  });
+
+  it("should ignore stored data with an incompatible version", () => {
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({ version: 99, messages: [{ role: "user", content: "old" }] }),
+    );
+
+    const ctx = new ChatContext({ storageKey });
+    expect(ctx.getMessages()).toEqual([]);
+  });
+
+  it("should ignore stored data with missing messages array", () => {
+    localStorage.setItem(storageKey, JSON.stringify({ version: 1 }));
+
+    const ctx = new ChatContext({ storageKey });
+    expect(ctx.getMessages()).toEqual([]);
+  });
+
+  it("should ignore corrupted JSON in local storage", () => {
+    localStorage.setItem(storageKey, "not-json");
+
+    const ctx = new ChatContext({ storageKey });
+    expect(ctx.getMessages()).toEqual([]);
+  });
+
+  it("should be ephemeral (no load/save) when storageKey is not provided", () => {
+    const ctx = new ChatContext();
+    ctx.addMessage({ role: "user", content: "ephemeral" });
+    expect(ctx.getMessages()).toEqual([{ role: "user", content: "ephemeral" }]);
   });
 });

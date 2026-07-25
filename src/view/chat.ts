@@ -4,27 +4,49 @@ import type { FileTree } from "../data/file-tree.ts";
 import { h } from "../h.ts";
 import { ChatProfilesView, DEFAULT_SYSTEM_PROMPT } from "./chat-profiles.ts";
 
+const CHAT_STORAGE_KEY = "swing_chat_messages";
+
 export class ChatView {
   public readonly view: HTMLElement;
   private readonly profiles = new ChatProfilesView();
-  private readonly context = new ChatContext();
+  private readonly context = new ChatContext({ storageKey: CHAT_STORAGE_KEY });
 
   constructor(private fs: FileTree) {
     const currentProfile = this.profiles.value;
     const systemPrompt = currentProfile?.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-    this.context.addMessage({
-      role: "system",
-      content: systemPrompt,
-    });
+    if (this.context.isEmpty()) {
+      this.context.addMessage({
+        role: "system",
+        content: systemPrompt,
+      });
+    }
 
     let messagesContainer: HTMLElement;
     let input: HTMLTextAreaElement;
     let sendBtn: HTMLButtonElement;
     let abortBtn: HTMLButtonElement;
+    const initialContent = this.context.isEmpty()
+      ? [h("div", {}, ["Welcome! How can I help you today?"])]
+      : this.context
+          .getMessages()
+          .filter((m) => m.role !== "system")
+          .map((m) => {
+            if (m.role === "tool") {
+              const content = m.content || "";
+              const isError = content.startsWith("ERR ");
+              const firstLine = content.split("\n")[0] ?? "";
+              const displayText = firstLine.substring(isError ? 4 : 3);
+              return h("div", { class: `log-type-${isError ? "error" : "info"}` }, [displayText]);
+            }
+            return h("div", { class: `log-type-${m.role}` }, [m.content]);
+          });
+
     const main = h("div", { class: "chat-main" }, [
-      (messagesContainer = h("div", { class: "chat-content", id: "chat-messages" }, [
-        h("div", {}, ["Welcome! How can I help you today?"]),
-      ])),
+      (messagesContainer = h(
+        "div",
+        { class: "chat-content", id: "chat-messages" },
+        initialContent,
+      )),
       h("div", { class: "chat-input-area" }, [
         (input = h("textarea", {
           id: "chat-input",
@@ -49,14 +71,13 @@ export class ChatView {
               this.context.clear();
               const currentProfile = this.profiles.value;
               const systemPrompt = currentProfile?.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-              this.context.addMessage({
-                role: "system",
-                content: systemPrompt,
-              });
-              if (messagesContainer) {
-                messagesContainer.innerHTML = "";
-                messagesContainer.appendChild(h("div", {}, ["Chat history cleared."]));
+              if (this.context.isEmpty()) {
+                this.context.addMessage({
+                  role: "system",
+                  content: systemPrompt,
+                });
               }
+              messagesContainer?.replaceChildren(h("div", {}, ["Chat history cleared."]));
             },
           },
           ["Clear"],
