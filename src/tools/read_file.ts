@@ -69,7 +69,9 @@ const readFileTool: Tool = {
     }
 
     const wasPartial = from > 1 || to < totalLines;
-    const rangeSuffix = wasPartial ? ` (lines ${from}-${to} of ${totalLines})` : ` (${totalLines} line${totalLines > 1 ? "s" : ""})`;
+    const rangeSuffix = wasPartial
+      ? ` (lines ${from}-${to} of ${totalLines})`
+      : ` (${totalLines} line${totalLines > 1 ? "s" : ""})`;
     return `read ${path}${rangeSuffix}\n${contentString}`;
   },
 };

@@ -10,6 +10,10 @@ export class ChatView {
   public readonly view: HTMLElement;
   private readonly profiles = new ChatProfilesView();
   private readonly context = new ChatContext({ storageKey: CHAT_STORAGE_KEY });
+  private contextSizeDisplay: HTMLElement;
+  private tokenCountDisplay: HTMLElement;
+  private toolbar: HTMLElement;
+  private chatBanner: HTMLElement | null = null;
 
   constructor(private fs: FileTree) {
     const currentProfile = this.profiles.value;
@@ -25,9 +29,15 @@ export class ChatView {
     let input: HTMLTextAreaElement;
     let sendBtn: HTMLButtonElement;
     let abortBtn: HTMLButtonElement;
-    const initialContent = this.context.isEmpty()
-      ? [h("div", {}, ["Welcome! How can I help you today?"])]
-      : this.context
+
+    if (this.context.isEmpty()) {
+      this.chatBanner = h("div", { class: "chat-banner" }, ["Welcome! How can I help you today?"]);
+    }
+
+    const main = h("div", { class: "chat-main" }, [
+      (messagesContainer = h("div", { class: "chat-content", id: "chat-messages" }, [
+        this.chatBanner,
+        this.context
           .getMessages()
           .filter((m) => m.role !== "system")
           .map((m) => {
@@ -39,14 +49,8 @@ export class ChatView {
               return h("div", { class: `log-type-${isError ? "error" : "info"}` }, [displayText]);
             }
             return h("div", { class: `log-type-${m.role}` }, [m.content]);
-          });
-
-    const main = h("div", { class: "chat-main" }, [
-      (messagesContainer = h(
-        "div",
-        { class: "chat-content", id: "chat-messages" },
-        initialContent,
-      )),
+          }),
+      ])),
       h("div", { class: "chat-input-area" }, [
         (input = h("textarea", {
           id: "chat-input",
@@ -69,6 +73,7 @@ export class ChatView {
           {
             onclick: () => {
               this.context.clear();
+              this.updateChatHeader();
               const currentProfile = this.profiles.value;
               const systemPrompt = currentProfile?.systemPrompt || DEFAULT_SYSTEM_PROMPT;
               if (this.context.isEmpty()) {
@@ -77,7 +82,11 @@ export class ChatView {
                   content: systemPrompt,
                 });
               }
-              messagesContainer?.replaceChildren(h("div", {}, ["Chat history cleared."]));
+              if (messagesContainer) {
+                messagesContainer.replaceChildren();
+                this.chatBanner = h("div", { class: "chat-banner" }, ["Chat history cleared."]);
+                messagesContainer.appendChild(this.chatBanner);
+              }
             },
           },
           ["Clear"],
@@ -103,10 +112,17 @@ export class ChatView {
           "div",
           {
             class: "chat-header",
-            style: { display: "flex", "justify-content": "space-between", "align-items": "center" },
           },
-          [h("span", {}, ["CHAT"]), this.profiles.selectView],
+          [
+            h("span", {}, ["CHAT"]),
+            (this.contextSizeDisplay = h("span", { class: "context-size-display" }, [""])),
+            (this.tokenCountDisplay = h("span", { class: "token-count-display" }, [""])),
+            this.profiles.selectView,
+          ],
         ),
+        (this.toolbar = h("div", { class: "chat-toolbar" }, [
+          h("div", { class: "toolbar-spacer" }),
+        ])),
         main,
         this.profiles.dialogView,
       ],
@@ -122,6 +138,8 @@ export class ChatView {
 
       resizeHandle.style.display = disabled ? "none" : "block";
 
+      this.toolbar.style.display = disabled ? "none" : "flex";
+
       if (disabled) {
         this.view.style.height = "";
       } else {
@@ -130,9 +148,18 @@ export class ChatView {
     };
 
     updateInputsDisabled();
+    this.context.addChangeListener(() => this.updateChatHeader());
+    this.updateChatHeader();
     if (currentProfile) {
       this.view.style.height = `${window.innerHeight / 3}px`;
     }
+
+    // Scroll to bottom after initial content is rendered
+    setTimeout(() => {
+      if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+    }, 0);
 
     this.profiles.onchange = () => {
       updateInputsDisabled();
@@ -156,8 +183,7 @@ export class ChatView {
     if (messagesContainer) {
       if (
         messagesContainer.children.length === 1 &&
-        (messagesContainer.firstChild?.textContent === "Welcome! How can I help you today?" ||
-          messagesContainer.firstChild?.textContent === "Chat history cleared.")
+        messagesContainer.querySelector(".chat-banner")
       ) {
         messagesContainer.innerHTML = "";
       }
@@ -189,10 +215,14 @@ export class ChatView {
 
     const controller = new AbortController();
     const currentProfile = this.profiles.value;
+    if (!currentProfile) {
+      return;
+    }
+
     const config: ChatConfig = {
-      url: currentProfile?.url || "http://localhost:11434/v1/chat/completions",
-      model: currentProfile?.model || "gemma4:31b-cloud",
-      key: currentProfile?.key || "unspecified",
+      url: currentProfile.url,
+      model: currentProfile.model,
+      key: currentProfile.key,
       stream: true,
       think: true,
       fs: this.fs,
@@ -216,6 +246,11 @@ export class ChatView {
     sendBtn.disabled = true;
     abortBtn.disabled = false;
 
+    if (this.chatBanner) {
+      this.chatBanner.remove();
+      this.chatBanner = null;
+    }
+
     abortBtn.onclick = () => {
       controller.abort();
     };
@@ -237,6 +272,32 @@ export class ChatView {
       sendBtn.disabled = isDisabled;
       abortBtn.disabled = true;
       abortBtn.onclick = null;
+    }
+  }
+
+  private updateChatHeader() {
+    const format = (n: number) => {
+      if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+      if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+      return n.toString();
+    };
+    const usage = this.context.getUsage();
+
+    const nextContext = usage.lastInputTokens + usage.lastOutputTokens;
+    if (nextContext) {
+      this.contextSizeDisplay.textContent = `${format(nextContext)} Context`;
+    } else {
+      this.contextSizeDisplay.textContent = "";
+    }
+
+    if (usage.totalInputTokens || usage.totalOutputTokens || usage.totalCachedTokens) {
+      this.tokenCountDisplay.textContent = [
+        `${format(usage.totalInputTokens)} In`,
+        `${format(usage.totalOutputTokens)} Out`,
+        ...(usage.totalCachedTokens > 0 ? [`${format(usage.totalCachedTokens)} Cached`] : []),
+      ].join(" / ");
+    } else {
+      this.tokenCountDisplay.textContent = "";
     }
   }
 }

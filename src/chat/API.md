@@ -19,6 +19,7 @@ Manages the conversation state and history.
 - `addMessage(message: Message): void`: Adds a new message to the history. Persists to storage if
   configured.
 - `getMessages(): Message[]`: Returns a copy of the current conversation history.
+- `isEmpty(): boolean`: Returns true if there are no messages in the history.
 - `clear(): void`: Wipes all messages from the history. Persists to storage if configured.
 - `removeToolCall(toolCallId: string): boolean`: Removes tool calls and their corresponding results
   associated with a specific ID. Persists to storage if configured.

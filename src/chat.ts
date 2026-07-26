@@ -1,5 +1,5 @@
 import type { ChatContext } from "./chat/context.ts";
-import type { ChatCompletionChunk, Message, ToolCall } from "./chat/types.ts";
+import type { ChatCompletion, ChatCompletionChunk, Message, ToolCall } from "./chat/types.ts";
 import type { FileTree } from "./data/file-tree.ts";
 import deleteFileTool from "./tools/delete_file.ts";
 import editLinesTool from "./tools/edit_lines.ts";
@@ -13,7 +13,7 @@ import writeFileTool from "./tools/write_file.ts";
 export interface ChatConfig {
   url: string;
   model: string;
-  key: string;
+  key: string | undefined;
   stream?: boolean;
   think?: boolean;
   fs: FileTree;
@@ -42,15 +42,24 @@ async function executeTools(toolCalls: ToolCall[], config: ChatConfig): Promise<
   for (const toolCall of toolCalls) {
     const tool = toolRegistry[toolCall.function.name];
     if (!tool) {
-      throw new Error(`Unknown tool: ${toolCall.function.name}`);
+      const message = `Unknown tool: ${toolCall.function.name}`;
+      config.logInfo(message);
+      toolResults.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: `ERR ${message}`,
+      });
+      continue;
     }
-    const args = JSON.parse(toolCall.function.arguments);
     let result;
     try {
+      const args = JSON.parse(toolCall.function.arguments);
       const rawResult = await tool.execute(args, config, toolCall.id);
       result = `OK ${rawResult}`;
-      const firstLine = rawResult.split('\n')[0];
-      if (firstLine) {config.logInfo(firstLine);}
+      const firstLine = rawResult.split("\n")[0];
+      if (firstLine) {
+        config.logInfo(firstLine);
+      }
     } catch (e: any) {
       result = `ERR ${e.message}`;
       config.logInfo(e.message);
@@ -73,8 +82,9 @@ export async function sendMessageStream(config: ChatConfig) {
       model: config.model,
       messages: currentMessages,
       stream: streamEnabled,
-      think: config.think ? config.think : false,
+      think: !!config.think,
       tools: tools,
+      stream_options: streamEnabled ? { include_usage: true } : undefined,
     };
 
     let response;
@@ -107,8 +117,15 @@ export async function sendMessageStream(config: ChatConfig) {
     }
 
     if (!streamEnabled) {
-      const data = await response.json();
-      const message = data.choices[0].message;
+      const data = (await response.json()) as ChatCompletion;
+      const message = data.choices[0]?.message;
+      if (!message) {
+        break;
+      }
+
+      if (data.usage) {
+        config.context.updateUsage(data.usage);
+      }
 
       if (message.tool_calls && message.tool_calls.length > 0) {
         const toolResults = await executeTools(message.tool_calls, config);
@@ -151,6 +168,11 @@ export async function sendMessageStream(config: ChatConfig) {
           if (trimmed.startsWith("data: ")) {
             try {
               const json = JSON.parse(trimmed.substring(6)) as ChatCompletionChunk;
+
+              if (json.usage) {
+                config.context.updateUsage(json.usage);
+              }
+
               const delta = json.choices[0]?.delta;
               if (!delta) continue;
 

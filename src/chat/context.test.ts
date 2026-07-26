@@ -272,7 +272,13 @@ describe("ChatContext persistence", () => {
       {
         role: "assistant",
         content: "I can help. Let me check the files.",
-        tool_calls: [{ id: "call_1", type: "function", function: { name: "list_files", arguments: '{"path": "."}' } }],
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "list_files", arguments: '{"path": "."}' },
+          },
+        ],
       },
       { role: "tool", tool_call_id: "call_1", content: "file1.ts, file2.ts" },
       { role: "assistant", content: "I see the files." },
@@ -284,5 +290,4 @@ describe("ChatContext persistence", () => {
     const ctx2 = new ChatContext({ storageKey });
     expect(ctx2.getMessages()).toEqual(messages);
   });
-
 });

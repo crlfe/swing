@@ -134,11 +134,16 @@ export class SidebarView {
           const text = await file.text();
           this.fs.write(file.name, text.split("\n"));
           await this.onOpen({ label: file.name, path: file.name });
+        } else {
+          const text = await new Promise<string>((resolve) => {
+            item.getAsString(resolve);
+          });
+          if (text) {
+            const name = `untitled-${Date.now()}.txt`;
+            this.fs.write(name, text.split("\n"));
+            await this.onOpen({ label: name, path: name });
+          }
         }
-
-        item.getAsString((text) => {
-          console.log("TODO: Create untitled file for", text);
-        });
       }
     });
   }

@@ -52,6 +52,7 @@ export interface ChatCompletion {
   created: number;
   model: string;
   choices: ChatCompletionChoice[];
+  usage?: ChatCompletionUsage;
 }
 
 export interface ChatCompletionChoice {
@@ -67,6 +68,16 @@ export interface ChatCompletionChunk {
   created: number;
   model: string;
   choices: ChatCompletionChoiceDelta[];
+  usage?: ChatCompletionUsage; // Added this
+}
+
+export interface ChatCompletionUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_tokens_details?: {
+    cached_tokens: number;
+  };
 }
 
 export interface ChatCompletionChoiceDelta {
