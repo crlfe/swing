@@ -23,10 +23,12 @@ const MaxFileSize = 1 * 1024 * 1024 // 1MB limit for reading/grepping files
 // --- OpenAI API Types ---
 
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	Reasoning        string     `json:"reasoning,omitempty"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type ToolCall struct {
@@ -52,11 +54,20 @@ type FunctionDef struct {
 	Parameters  any    `json:"parameters"`
 }
 
+type RequestMessage struct {
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+}
+
 type ChatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Tools    []Tool    `json:"tools,omitempty"`
-	Stream   bool      `json:"stream"`
+	Model           string           `json:"model"`
+	Messages        []RequestMessage `json:"messages"`
+	Tools           []Tool           `json:"tools,omitempty"`
+	Stream          bool             `json:"stream"`
+	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
+	Think           string           `json:"think,omitempty"`
 }
 
 type ChatResponse struct {
@@ -69,8 +80,10 @@ type ChatResponse struct {
 type ChatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string     `json:"content"`
-			ToolCalls []ToolCall `json:"tool_calls"`
+			Content          string     `json:"content"`
+			Reasoning        string     `json:"reasoning"`
+			ReasoningContent string     `json:"reasoning_content"`
+			ToolCalls        []ToolCall `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
 }
@@ -264,6 +277,18 @@ func sanitizeForTerminal(s string) string {
 	}, s)
 }
 
+func getRangeString(startLine, endLine int) string {
+	if startLine <= 0 && endLine <= 0 {
+		return ""
+	}
+	if startLine > 0 && endLine == 0 {
+		return fmt.Sprintf(" (lines %d-end)", startLine)
+	} else if startLine == 0 && endLine > 0 {
+		return fmt.Sprintf(" (lines start-%d)", endLine)
+	}
+	return fmt.Sprintf(" (lines %d-%d)", startLine, endLine)
+}
+
 func splitFileOnString(path string, search string, startLine, endLine int) (before, match, after string, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -316,7 +341,7 @@ func splitFileOnString(path string, search string, startLine, endLine int) (befo
 		return "", "", "", fmt.Errorf("search string not found in file (within lines %d-%d)", startLine, endLine)
 	}
 
-	if strings.Index(searchArea[idx+1:], search) != -1 {
+	if strings.Contains(searchArea[idx+1:], search) {
 		return "", "", "", fmt.Errorf("search string found multiple times in search area")
 	}
 
@@ -348,9 +373,9 @@ func resolvePath(path string) (string, error) {
 		return "", fmt.Errorf("the 'path' argument is outside the working directory")
 	}
 
-	for _, comp := range strings.Split(rel, string(filepath.Separator)) {
+	for comp := range strings.SplitSeq(rel, string(filepath.Separator)) {
 		if comp != "" && comp != "." && strings.HasPrefix(comp, ".") {
-			return "", fmt.Errorf("the 'path' argument includes a hidden file or directory; these are blocked for security reasons", comp)
+			return "", fmt.Errorf("the 'path' argument includes a hidden file or directory; these are blocked for security reasons")
 		}
 	}
 
@@ -440,16 +465,7 @@ func handleReadBlock(argsJSON string) (string, error) {
 		firstLineOfQuery = lines[0]
 	}
 
-	rangeStr := ""
-	if args.StartLine > 0 || args.EndLine > 0 {
-		if args.StartLine > 0 && args.EndLine == 0 {
-			rangeStr = fmt.Sprintf(" (lines %d-end)", args.StartLine)
-		} else if args.StartLine == 0 && args.EndLine > 0 {
-			rangeStr = fmt.Sprintf(" (lines start-%d)", args.EndLine)
-		} else {
-			rangeStr = fmt.Sprintf(" (lines %d-%d)", args.StartLine, args.EndLine)
-		}
-	}
+	rangeStr := getRangeString(args.StartLine, args.EndLine)
 	fmt.Printf("\033[32m[Tool]\033[0m read_block %q find %q%s\n", args.Path, firstLineOfQuery, rangeStr)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
@@ -507,16 +523,7 @@ func handleWriteBlock(argsJSON string) (string, error) {
 		firstLine = lines[0]
 	}
 
-	rangeStr := ""
-	if args.StartLine > 0 || args.EndLine > 0 {
-		if args.StartLine > 0 && args.EndLine == 0 {
-			rangeStr = fmt.Sprintf(" (lines %d-end)", args.StartLine)
-		} else if args.StartLine == 0 && args.EndLine > 0 {
-			rangeStr = fmt.Sprintf(" (lines start-%d)", args.EndLine)
-		} else {
-			rangeStr = fmt.Sprintf(" (lines %d-%d)", args.StartLine, args.EndLine)
-		}
-	}
+	rangeStr := getRangeString(args.StartLine, args.EndLine)
 	fmt.Printf("\033[32m[Tool]\033[0m write_block %q replace %q%s\n", args.Path, firstLine, rangeStr)
 
 	safePath, err := resolvePath(args.Path)
@@ -745,12 +752,24 @@ func getTools() []Tool {
 	return tools
 }
 
-func callEndpointStreaming(ctx context.Context, baseUrl, apiKey, model string, messages []Message, tools []Tool) (Message, error) {
+func callEndpointStreaming(ctx context.Context, baseUrl, apiKey, model, reasoningEffort string, messages []Message, tools []Tool, isFirstTurn bool) (Message, error) {
+	reqMessages := make([]RequestMessage, 0, len(messages))
+	for _, m := range messages {
+		reqMessages = append(reqMessages, RequestMessage{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+			ToolCalls:  m.ToolCalls,
+		})
+	}
+
 	reqBody := ChatRequest{
-		Model:    model,
-		Messages: messages,
-		Tools:    tools,
-		Stream:   true,
+		Model:           model,
+		Messages:        reqMessages,
+		Tools:           tools,
+		Stream:          true,
+		ReasoningEffort: reasoningEffort,
+		Think:           reasoningEffort,
 	}
 
 	jsonReq, err := json.MarshalIndent(reqBody, "", "  ")
@@ -766,7 +785,7 @@ func callEndpointStreaming(ctx context.Context, baseUrl, apiKey, model string, m
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	fmt.Print("\033[33mThinking...\033[0m ")
+	fmt.Print("\033[33mWaiting...\033[0m ")
 	resp, err := httpClient.Do(req)
 	fmt.Print("\r\033[K")
 	if err != nil {
@@ -784,6 +803,20 @@ func callEndpointStreaming(ctx context.Context, baseUrl, apiKey, model string, m
 
 	toolCallsMap := make(map[int]*ToolCall)
 	maxIdx := -1
+
+	// Track the current output mode to add blank lines on transitions.
+	// 0: none, 1: reasoning, 2: content
+	lastMode := 0
+	startedPrinting := false
+	var lastChar rune
+
+	printTransitionNewline := func() {
+		if lastChar == '\n' {
+			fmt.Print("\n")
+		} else {
+			fmt.Print("\n\n")
+		}
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -807,9 +840,58 @@ func callEndpointStreaming(ctx context.Context, baseUrl, apiKey, model string, m
 			}
 
 			delta := chunk.Choices[0].Delta
+
+			// Handle Reasoning
+			if delta.Reasoning != "" {
+				if !isFirstTurn && !startedPrinting {
+					fmt.Print("\n")
+					startedPrinting = true
+				}
+				if lastMode == 2 {
+					printTransitionNewline()
+				}
+				sanitized := sanitizeForTerminal(delta.Reasoning)
+				fmt.Print("\033[38;5;244m" + sanitized + "\033[0m")
+				assistantMsg.Reasoning += delta.Reasoning
+				lastMode = 1
+				if len(sanitized) > 0 {
+					lastChar = rune(sanitized[len(sanitized)-1])
+				}
+			}
+
+			// Handle ReasoningContent
+			if delta.ReasoningContent != "" {
+				if !isFirstTurn && !startedPrinting {
+					fmt.Print("\n")
+					startedPrinting = true
+				}
+				if lastMode == 2 {
+					printTransitionNewline()
+				}
+				sanitized := sanitizeForTerminal(delta.ReasoningContent)
+				fmt.Print("\033[38;5;244m" + sanitized + "\033[0m")
+				assistantMsg.ReasoningContent += delta.ReasoningContent
+				lastMode = 1
+				if len(sanitized) > 0 {
+					lastChar = rune(sanitized[len(sanitized)-1])
+				}
+			}
+
 			if delta.Content != "" {
-				fmt.Print(sanitizeForTerminal(delta.Content))
+				if !isFirstTurn && !startedPrinting {
+					fmt.Print("\n")
+					startedPrinting = true
+				}
+				if lastMode == 1 {
+					printTransitionNewline()
+				}
+				sanitized := sanitizeForTerminal(delta.Content)
+				fmt.Print(sanitized)
 				assistantMsg.Content += delta.Content
+				lastMode = 2
+				if len(sanitized) > 0 {
+					lastChar = rune(sanitized[len(sanitized)-1])
+				}
 			}
 
 			for _, tc := range delta.ToolCalls {
@@ -858,6 +940,10 @@ func main() {
 	baseUrl := os.Getenv("OPENAI_BASE_URL")
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	model := os.Getenv("OPENAI_MODEL")
+	reasoningEffort := os.Getenv("OPENAI_REASONING_EFFORT")
+	if reasoningEffort == "" {
+		reasoningEffort = "medium"
+	}
 	if baseUrl == "" || apiKey == "" || model == "" {
 		fmt.Println("Missing OPENAI_BASE_URL, OPENAI_API_KEY, or OPENAI_MODEL")
 		os.Exit(1)
@@ -871,12 +957,13 @@ func main() {
 	fmt.Println("\033[1mLLM Terminal Bootstrap (Ctrl-C to cancel thinking or quit)\033[0m")
 	fmt.Printf("\033[1mURL:\033[0m %s/chat/completions\n", baseUrl)
 	fmt.Printf("\033[1mModel:\033[0m %s\n", model)
+	fmt.Printf("\033[1mEffort:\033[0m %s\n", reasoningEffort)
 
 	tools := getTools()
 	var messages []Message
 	messages = append(messages, Message{
 		Role:    "system",
-		Content: "You are an expert developer with filesystem access. When modifying files, prefer surgical updates over full rewrites. Strategy: Use read_block to locate the specific section you want to change, then use write_block to replace only that specific block. Avoid write_file for existing files unless you are creating a new file or the changes are so extensive that a rewrite is more efficient.",
+		Content: "You are an expert developer with filesystem access. When modifying files, prefer surgical updates over full rewrites. Strategy: Use read_block to locate the specific section you want to change, then use write_block to replace only that specific block. Avoid write_file for existing files unless you are creating a new file or the changes are so extensive that a rewrite is more efficient. Please provide high-quality, step-by-step reasoning for your actions.",
 	})
 
 	reader := bufio.NewReader(os.Stdin)
@@ -942,8 +1029,8 @@ func main() {
 			}
 		}()
 
-		for {
-			assistantMsg, err := callEndpointStreaming(turnCtx, baseUrl, apiKey, model, messages, tools)
+		for i := 0; ; i++ {
+			assistantMsg, err := callEndpointStreaming(turnCtx, baseUrl, apiKey, model, reasoningEffort, messages, tools, i == 0)
 
 			if err != nil {
 				if turnCtx.Err() != nil {
@@ -956,8 +1043,18 @@ func main() {
 
 			messages = append(messages, assistantMsg)
 
-			if assistantMsg.Content != "" {
-				fmt.Println()
+			if assistantMsg.Content != "" || assistantMsg.Reasoning != "" || assistantMsg.ReasoningContent != "" {
+				lastText := assistantMsg.Content
+				if lastText == "" {
+					lastText = assistantMsg.ReasoningContent
+				}
+				if lastText == "" {
+					lastText = assistantMsg.Reasoning
+				}
+
+				if len(lastText) > 0 && lastText[len(lastText)-1] != '\n' {
+					fmt.Print("\n")
+				}
 			}
 			if len(assistantMsg.ToolCalls) == 0 {
 				break
