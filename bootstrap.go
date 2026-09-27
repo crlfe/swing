@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,9 @@ import (
 	"syscall"
 	"unicode"
 )
+
+//go:embed LICENSE.txt
+var licenseText string
 
 // --- Constants ---
 
@@ -67,7 +71,6 @@ type ChatRequest struct {
 	Tools           []Tool           `json:"tools,omitempty"`
 	Stream          bool             `json:"stream"`
 	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
-	Think           string           `json:"think,omitempty"`
 }
 
 type ChatResponse struct {
@@ -262,6 +265,13 @@ type ReadBlockArgs struct {
 
 type PathArgs struct {
 	Path string `json:"path"`
+}
+
+type Config struct {
+	BaseURL         string
+	APIKey          string
+	Model           string
+	ReasoningEffort string
 }
 
 var httpClient = &http.Client{
@@ -752,7 +762,7 @@ func getTools() []Tool {
 	return tools
 }
 
-func callEndpointStreaming(ctx context.Context, baseUrl, apiKey, model, reasoningEffort string, messages []Message, tools []Tool, isFirstTurn bool) (Message, error) {
+func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, tools []Tool, isFirstTurn bool) (Message, error) {
 	reqMessages := make([]RequestMessage, 0, len(messages))
 	for _, m := range messages {
 		reqMessages = append(reqMessages, RequestMessage{
@@ -764,12 +774,11 @@ func callEndpointStreaming(ctx context.Context, baseUrl, apiKey, model, reasonin
 	}
 
 	reqBody := ChatRequest{
-		Model:           model,
+		Model:           cfg.Model,
 		Messages:        reqMessages,
 		Tools:           tools,
 		Stream:          true,
-		ReasoningEffort: reasoningEffort,
-		Think:           reasoningEffort,
+		ReasoningEffort: cfg.ReasoningEffort,
 	}
 
 	jsonReq, err := json.MarshalIndent(reqBody, "", "  ")
@@ -777,13 +786,13 @@ func callEndpointStreaming(ctx context.Context, baseUrl, apiKey, model, reasonin
 		return Message{}, fmt.Errorf("failed to marshal request: %v", err)
 	}
 
-	fullUrl := strings.TrimSuffix(baseUrl, "/") + "/chat/completions"
+	fullUrl := strings.TrimSuffix(cfg.BaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", fullUrl, bytes.NewBuffer(jsonReq))
 	if err != nil {
 		return Message{}, fmt.Errorf("failed to create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
 	fmt.Print("\033[33mWaiting...\033[0m ")
 	resp, err := httpClient.Do(req)
@@ -936,28 +945,91 @@ func callEndpointStreaming(ctx context.Context, baseUrl, apiKey, model, reasonin
 	return assistantMsg, nil
 }
 
+func printUsage() {
+	fmt.Println("Usage: bootstrap [OPTIONS]")
+	fmt.Println("")
+	fmt.Println("Options:")
+	fmt.Println("  -u, --url <url>           Endpoint base URL (typically includes '/v1')")
+	fmt.Println("  -m, --model <model>       Model to call")
+	fmt.Println("  -r, --reasoning <effort>  Reasoning effort (none, low, medium, high)")
+	fmt.Println("      --help                Show this help message")
+	fmt.Println("      --version             Show version and licensing information")
+	fmt.Println("")
+	fmt.Println("Set an API key, if needed, using the OPENAI_API_KEY environment variable.")
+	fmt.Println("Unspecified options use OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_REASONING_EFFORT.")
+}
+
+func printVersion() {
+	fmt.Println("LLM Terminal Bootstrap")
+	fmt.Println(licenseText)
+}
+
 func main() {
-	baseUrl := os.Getenv("OPENAI_BASE_URL")
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	model := os.Getenv("OPENAI_MODEL")
-	reasoningEffort := os.Getenv("OPENAI_REASONING_EFFORT")
-	if reasoningEffort == "" {
-		reasoningEffort = "medium"
+	cfg := Config{
+		BaseURL:         os.Getenv("OPENAI_BASE_URL"),
+		APIKey:          os.Getenv("OPENAI_API_KEY"),
+		Model:           os.Getenv("OPENAI_MODEL"),
+		ReasoningEffort: os.Getenv("OPENAI_REASONING_EFFORT"),
 	}
-	if baseUrl == "" || apiKey == "" || model == "" {
-		fmt.Println("Missing OPENAI_BASE_URL, OPENAI_API_KEY, or OPENAI_MODEL")
+
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--help":
+			printUsage()
+			os.Exit(2)
+		case "--version":
+			printVersion()
+			os.Exit(2)
+		case "-u", "--url":
+			if i+1 < len(args) {
+				cfg.BaseURL = args[i+1]
+				i++
+			} else {
+				fmt.Println("Error: --url requires a value")
+				os.Exit(1)
+			}
+		case "-m", "--model":
+			if i+1 < len(args) {
+				cfg.Model = args[i+1]
+				i++
+			} else {
+				fmt.Println("Error: --model requires a value")
+				os.Exit(1)
+			}
+		case "-r", "--reasoning":
+			if i+1 < len(args) {
+				cfg.ReasoningEffort = args[i+1]
+				i++
+			} else {
+				fmt.Println("Error: --reasoning requires a value")
+				os.Exit(1)
+			}
+		default:
+			fmt.Printf("Unknown option: %s\n", args[i])
+			printUsage()
+			os.Exit(1)
+		}
+	}
+
+	if cfg.BaseURL == "" {
+		fmt.Println("Must set an endpoint base URL via OPENAI_BASE_URL or --url.")
 		os.Exit(1)
 	}
 
-	baseUrl = strings.TrimSuffix(baseUrl, "/")
+	cfg.BaseURL = strings.TrimSuffix(cfg.BaseURL, "/")
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	fmt.Println("\033[1mLLM Terminal Bootstrap (Ctrl-C to cancel thinking or quit)\033[0m")
-	fmt.Printf("\033[1mURL:\033[0m %s/chat/completions\n", baseUrl)
-	fmt.Printf("\033[1mModel:\033[0m %s\n", model)
-	fmt.Printf("\033[1mEffort:\033[0m %s\n", reasoningEffort)
+	fmt.Println("\033[1mLLM Terminal Bootstrap (Ctrl-C to interrupt or exit)\033[0m")
+	fmt.Printf("\033[1mURL:\033[0m %s/chat/completions\n", cfg.BaseURL)
+	if cfg.Model != "" {
+		fmt.Printf("\033[1mModel:\033[0m %s\n", cfg.Model)
+	}
+	if cfg.ReasoningEffort != "" {
+		fmt.Printf("\033[1mEffort:\033[0m %s\n", cfg.ReasoningEffort)
+	}
 
 	tools := getTools()
 	var messages []Message
@@ -1030,7 +1102,7 @@ func main() {
 		}()
 
 		for i := 0; ; i++ {
-			assistantMsg, err := callEndpointStreaming(turnCtx, baseUrl, apiKey, model, reasoningEffort, messages, tools, i == 0)
+			assistantMsg, err := callEndpointStreaming(turnCtx, cfg, messages, tools, i == 0)
 
 			if err != nil {
 				if turnCtx.Err() != nil {
