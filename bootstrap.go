@@ -392,8 +392,8 @@ func resolvePath(path string) (string, error) {
 	return absPath, nil
 }
 
-func logToolCall(name, path string) {
-	fmt.Printf("\033[32m[Tool]\033[0m %s %q\n", name, path)
+func logToolCall(format string, args ...any) {
+	fmt.Printf("\033[32m[Tool]\033[0m "+format+"\n", args...)
 }
 
 func unmarshalStrict(data []byte, target any) error {
@@ -443,7 +443,7 @@ func handleReadFile(argsJSON string) (string, error) {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	logToolCall("read_file", args.Path)
+	logToolCall("read_file %q", args.Path)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
@@ -476,7 +476,7 @@ func handleReadBlock(argsJSON string) (string, error) {
 	}
 
 	rangeStr := getRangeString(args.StartLine, args.EndLine)
-	fmt.Printf("\033[32m[Tool]\033[0m read_block %q find %q%s\n", args.Path, firstLineOfQuery, rangeStr)
+	logToolCall("read_block %q find %q%s", args.Path, firstLineOfQuery, rangeStr)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
@@ -534,7 +534,7 @@ func handleWriteBlock(argsJSON string) (string, error) {
 	}
 
 	rangeStr := getRangeString(args.StartLine, args.EndLine)
-	fmt.Printf("\033[32m[Tool]\033[0m write_block %q replace %q%s\n", args.Path, firstLine, rangeStr)
+	logToolCall("write_block %q replace %q%s", args.Path, firstLine, rangeStr)
 
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
@@ -560,7 +560,7 @@ func handleWriteFile(argsJSON string) (string, error) {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	logToolCall("write_file", args.Path)
+	logToolCall("write_file %q", args.Path)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
@@ -579,7 +579,7 @@ func handleListDir(argsJSON string) (string, error) {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	logToolCall("list_dir", args.Path)
+	logToolCall("list_dir %q", args.Path)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
@@ -609,7 +609,7 @@ func handleFindFiles(argsJSON string) (string, error) {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	fmt.Printf("\033[32m[Tool]\033[0m find_files %q pattern %q\n", args.Path, args.Pattern)
+	logToolCall("find_files %q pattern %q", args.Path, args.Pattern)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
@@ -630,7 +630,7 @@ func handleGrepFiles(argsJSON string) (string, error) {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	fmt.Printf("\033[32m[Tool]\033[0m grep_files %q query %q\n", args.Path, args.Query)
+	logToolCall("grep_files %q query %q", args.Path, args.Query)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
@@ -675,7 +675,7 @@ func handleDeleteFile(argsJSON string) (string, error) {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	logToolCall("delete_file", args.Path)
+	logToolCall("delete_file %q", args.Path)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
@@ -701,7 +701,7 @@ func handleCreateDir(argsJSON string) (string, error) {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	logToolCall("create_dir", args.Path)
+	logToolCall("create_dir %q", args.Path)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
@@ -719,7 +719,7 @@ func handleDeleteDir(argsJSON string) (string, error) {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	logToolCall("delete_dir", args.Path)
+	logToolCall("delete_dir %q", args.Path)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
@@ -781,7 +781,7 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 		ReasoningEffort: cfg.ReasoningEffort,
 	}
 
-	jsonReq, err := json.MarshalIndent(reqBody, "", "  ")
+	jsonReq, err := json.Marshal(reqBody)
 	if err != nil {
 		return Message{}, fmt.Errorf("failed to marshal request: %v", err)
 	}
