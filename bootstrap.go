@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"unicode"
@@ -58,19 +59,12 @@ type FunctionDef struct {
 	Parameters  any    `json:"parameters"`
 }
 
-type RequestMessage struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-}
-
 type ChatRequest struct {
-	Model           string           `json:"model"`
-	Messages        []RequestMessage `json:"messages"`
-	Tools           []Tool           `json:"tools,omitempty"`
-	Stream          bool             `json:"stream"`
-	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
+	Model           string    `json:"model"`
+	Messages        []Message `json:"messages"`
+	Tools           []Tool    `json:"tools,omitempty"`
+	Stream          bool      `json:"stream"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
 }
 
 type ChatResponse struct {
@@ -105,6 +99,7 @@ type ToolHandler func(argsJSON string) (string, error)
 type ToolRegistration struct {
 	Description string
 	Parameters  JSObject
+	IsWrite     bool
 	Handler     ToolHandler
 }
 
@@ -118,6 +113,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path"},
 		},
+		IsWrite: false,
 		Handler: handleReadFile,
 	},
 	"read_block": {
@@ -132,6 +128,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path", "query"},
 		},
+		IsWrite: false,
 		Handler: handleReadBlock,
 	},
 	"write_block": {
@@ -147,6 +144,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path", "oldBlock", "newBlock"},
 		},
+		IsWrite: true,
 		Handler: handleWriteBlock,
 	},
 	"write_file": {
@@ -159,6 +157,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path", "content"},
 		},
+		IsWrite: true,
 		Handler: handleWriteFile,
 	},
 	"list_dir": {
@@ -170,6 +169,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path"},
 		},
+		IsWrite: false,
 		Handler: handleListDir,
 	},
 	"find_files": {
@@ -182,6 +182,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path", "pattern"},
 		},
+		IsWrite: false,
 		Handler: handleFindFiles,
 	},
 	"grep_files": {
@@ -194,6 +195,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path", "query"},
 		},
+		IsWrite: false,
 		Handler: handleGrepFiles,
 	},
 	"delete_file": {
@@ -205,6 +207,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path"},
 		},
+		IsWrite: true,
 		Handler: handleDeleteFile,
 	},
 	"create_dir": {
@@ -216,6 +219,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path"},
 		},
+		IsWrite: true,
 		Handler: handleCreateDir,
 	},
 	"delete_dir": {
@@ -227,6 +231,7 @@ var toolRegistry = map[string]ToolRegistration{
 			},
 			"required": []string{"path"},
 		},
+		IsWrite: true,
 		Handler: handleDeleteDir,
 	},
 }
@@ -739,11 +744,21 @@ func handleDeleteDir(argsJSON string) (string, error) {
 	return "Success", nil
 }
 
-func executeTool(tc ToolCall) (string, error) {
+func hasGoCommand(prompt string) bool {
+	re := regexp.MustCompile(`^/go(\s|$)|(^|\s)/go$`)
+	return re.MatchString(prompt)
+}
+
+func executeTool(tc ToolCall, writesAllowed bool) (string, error) {
 	reg, ok := toolRegistry[tc.Function.Name]
 	if !ok {
 		return "", fmt.Errorf("Unknown tool: %s", tc.Function.Name)
 	}
+
+	if reg.IsWrite && !writesAllowed {
+		return "", fmt.Errorf("Permission Denied: The user must explicitly authorize write operations by including '/go' at the beginning or end of their prompt")
+	}
+
 	return reg.Handler(tc.Function.Arguments)
 }
 
@@ -763,19 +778,9 @@ func getTools() []Tool {
 }
 
 func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, tools []Tool, isFirstTurn bool) (Message, error) {
-	reqMessages := make([]RequestMessage, 0, len(messages))
-	for _, m := range messages {
-		reqMessages = append(reqMessages, RequestMessage{
-			Role:       m.Role,
-			Content:    m.Content,
-			ToolCallID: m.ToolCallID,
-			ToolCalls:  m.ToolCalls,
-		})
-	}
-
 	reqBody := ChatRequest{
 		Model:           cfg.Model,
-		Messages:        reqMessages,
+		Messages:        messages,
 		Tools:           tools,
 		Stream:          true,
 		ReasoningEffort: cfg.ReasoningEffort,
@@ -1034,8 +1039,16 @@ func main() {
 	tools := getTools()
 	var messages []Message
 	messages = append(messages, Message{
-		Role:    "system",
-		Content: "You are an expert developer with filesystem access. When modifying files, prefer surgical updates over full rewrites. Strategy: Use read_block to locate the specific section you want to change, then use write_block to replace only that specific block. Avoid write_file for existing files unless you are creating a new file or the changes are so extensive that a rewrite is more efficient. Please provide high-quality, step-by-step reasoning for your actions.",
+		Role: "system",
+		Content: "In a simple terminal chat." +
+			"\n\n" +
+			"Prefer surgical updates to files over full rewrites: " +
+			"Use read_block to locate the specific section you want to change, " +
+			"then use write_block to replace only that specific block." +
+			"\n\n" +
+			"You can not write to the filesystem without permission from the user. " +
+			"They grant this permission by putting '/go' at the beginning or end of a prompt. " +
+			"Do not make changes beyond those authorized by the '/go' prompt.",
 	})
 
 	reader := bufio.NewReader(os.Stdin)
@@ -1089,6 +1102,7 @@ func main() {
 		}
 
 		messages = append(messages, Message{Role: "user", Content: userPrompt})
+		writesAllowed := hasGoCommand(userPrompt)
 		fmt.Println()
 
 		turnCtx, cancel := context.WithCancel(context.Background())
@@ -1136,7 +1150,7 @@ func main() {
 				if turnCtx.Err() != nil {
 					break
 				}
-				result, err := executeTool(tc)
+				result, err := executeTool(tc, writesAllowed)
 				if err != nil {
 					fmt.Printf("\033[31m[Error]\033[0m %s: %v\n", tc.Function.Name, err)
 					result = fmt.Sprintf("Error: %v", err)
