@@ -97,14 +97,16 @@ type JSObject map[string]any
 type ToolHandler func(argsJSON string) (string, error)
 
 type ToolRegistration struct {
+	Name        string
 	Description string
 	Parameters  JSObject
 	IsWrite     bool
 	Handler     ToolHandler
 }
 
-var toolRegistry = map[string]ToolRegistration{
-	"read_file": {
+var toolList = []ToolRegistration{
+	{
+		Name:        "read_file",
 		Description: "Read file contents",
 		Parameters: JSObject{
 			"type": "object",
@@ -116,7 +118,8 @@ var toolRegistry = map[string]ToolRegistration{
 		IsWrite: false,
 		Handler: handleReadFile,
 	},
-	"read_block": {
+	{
+		Name:        "read_block",
 		Description: "Read a specific function or block of code. Use this to inspect a small part of a file before editing it. It finds the first line containing the query and reads all subsequent lines that are more deeply indented, stopping before the line where indentation returns to the starting level. Optional: start_line and end_line to constrain search.",
 		Parameters: JSObject{
 			"type": "object",
@@ -131,7 +134,49 @@ var toolRegistry = map[string]ToolRegistration{
 		IsWrite: false,
 		Handler: handleReadBlock,
 	},
-	"write_block": {
+	{
+		Name:        "list_dir",
+		Description: "List directory files",
+		Parameters: JSObject{
+			"type": "object",
+			"properties": JSObject{
+				"path": JSObject{"type": "string"},
+			},
+			"required": []string{"path"},
+		},
+		IsWrite: false,
+		Handler: handleListDir,
+	},
+	{
+		Name:        "find_files",
+		Description: "Search for files whose names match a glob pattern",
+		Parameters: JSObject{
+			"type": "object",
+			"properties": JSObject{
+				"path":    JSObject{"type": "string", "description": "Root directory to start search"},
+				"pattern": JSObject{"type": "string", "description": "Glob pattern (e.g. *.go)"},
+			},
+			"required": []string{"path", "pattern"},
+		},
+		IsWrite: false,
+		Handler: handleFindFiles,
+	},
+	{
+		Name:        "grep_files",
+		Description: "Search for files containing a specified string",
+		Parameters: JSObject{
+			"type": "object",
+			"properties": JSObject{
+				"path":  JSObject{"type": "string", "description": "Root directory to start search"},
+				"query": JSObject{"type": "string", "description": "String to search for in file contents"},
+			},
+			"required": []string{"path", "query"},
+		},
+		IsWrite: false,
+		Handler: handleGrepFiles,
+	},
+	{
+		Name:        "write_block",
 		Description: "Surgically replace a specific block of text in a file. This is the preferred way to edit existing files. You must provide the exact text of the block to be replaced (oldBlock) and the new text (newBlock). Optional: start_line and end_line to constrain search.",
 		Parameters: JSObject{
 			"type": "object",
@@ -147,7 +192,8 @@ var toolRegistry = map[string]ToolRegistration{
 		IsWrite: true,
 		Handler: handleWriteBlock,
 	},
-	"write_file": {
+	{
+		Name:        "write_file",
 		Description: "Create a new file or completely overwrite an existing one. Use this only for new files or total rewrites.",
 		Parameters: JSObject{
 			"type": "object",
@@ -160,57 +206,8 @@ var toolRegistry = map[string]ToolRegistration{
 		IsWrite: true,
 		Handler: handleWriteFile,
 	},
-	"list_dir": {
-		Description: "List directory files",
-		Parameters: JSObject{
-			"type": "object",
-			"properties": JSObject{
-				"path": JSObject{"type": "string"},
-			},
-			"required": []string{"path"},
-		},
-		IsWrite: false,
-		Handler: handleListDir,
-	},
-	"find_files": {
-		Description: "Search for files whose names match a glob pattern",
-		Parameters: JSObject{
-			"type": "object",
-			"properties": JSObject{
-				"path":    JSObject{"type": "string", "description": "Root directory to start search"},
-				"pattern": JSObject{"type": "string", "description": "Glob pattern (e.g. *.go)"},
-			},
-			"required": []string{"path", "pattern"},
-		},
-		IsWrite: false,
-		Handler: handleFindFiles,
-	},
-	"grep_files": {
-		Description: "Search for files containing a specified string",
-		Parameters: JSObject{
-			"type": "object",
-			"properties": JSObject{
-				"path":  JSObject{"type": "string", "description": "Root directory to start search"},
-				"query": JSObject{"type": "string", "description": "String to search for in file contents"},
-			},
-			"required": []string{"path", "query"},
-		},
-		IsWrite: false,
-		Handler: handleGrepFiles,
-	},
-	"delete_file": {
-		Description: "Delete a file (errors if the path is a directory)",
-		Parameters: JSObject{
-			"type": "object",
-			"properties": JSObject{
-				"path": JSObject{"type": "string"},
-			},
-			"required": []string{"path"},
-		},
-		IsWrite: true,
-		Handler: handleDeleteFile,
-	},
-	"create_dir": {
+	{
+		Name:        "create_dir",
 		Description: "Create a new directory",
 		Parameters: JSObject{
 			"type": "object",
@@ -222,7 +219,21 @@ var toolRegistry = map[string]ToolRegistration{
 		IsWrite: true,
 		Handler: handleCreateDir,
 	},
-	"delete_dir": {
+	{
+		Name:        "delete_file",
+		Description: "Delete a file (errors if the path is a directory)",
+		Parameters: JSObject{
+			"type": "object",
+			"properties": JSObject{
+				"path": JSObject{"type": "string"},
+			},
+			"required": []string{"path"},
+		},
+		IsWrite: true,
+		Handler: handleDeleteFile,
+	},
+	{
+		Name:        "delete_dir",
 		Description: "Delete an empty directory (errors if not empty)",
 		Parameters: JSObject{
 			"type": "object",
@@ -234,6 +245,18 @@ var toolRegistry = map[string]ToolRegistration{
 		IsWrite: true,
 		Handler: handleDeleteDir,
 	},
+}
+
+var toolRegistry map[string]ToolRegistration
+
+func init() {
+	toolRegistry = make(map[string]ToolRegistration, len(toolList))
+	for _, reg := range toolList {
+		if _, exists := toolRegistry[reg.Name]; exists {
+			panic("duplicate tool name: " + reg.Name)
+		}
+		toolRegistry[reg.Name] = reg
+	}
 }
 
 // --- Tool Argument Types ---
@@ -763,12 +786,12 @@ func executeTool(tc ToolCall, writesAllowed bool) (string, error) {
 }
 
 func getTools() []Tool {
-	var tools []Tool
-	for name, reg := range toolRegistry {
+	tools := make([]Tool, 0, len(toolList))
+	for _, reg := range toolList {
 		tools = append(tools, Tool{
 			Type: "function",
 			Function: FunctionDef{
-				Name:        name,
+				Name:        reg.Name,
 				Description: reg.Description,
 				Parameters:  reg.Parameters,
 			},
