@@ -24,7 +24,10 @@ var licenseText string
 
 // --- Constants ---
 
-const maxFileSize = 1 * 1024 * 1024 // 1MB limit for reading/grepping files
+// maxFileSize is the size guard enforced by readTextFile, so it applies to
+// every tool that loads a file: read_file, read_block, grep_files and
+// write_block alike.
+const maxFileSize = 1 * 1024 * 1024 // 1MB
 
 // maxReadBytes caps the content returned by read_file / read_block before
 // truncation. The budget is in bytes rather than lines because token cost
@@ -43,8 +46,10 @@ const maxGrepLineBytes = 500
 // would otherwise flood the transcript with paths.
 const maxFindResults = 200
 
-// maxWalkErrors caps how many filepath.WalkDir errors are printed before the
-// remainder are summarized in a single suppressed-count line.
+// maxWalkErrors caps how many per-entry filepath.WalkDir errors walkFiles
+// prints before the remainder are summarized in a single suppressed-count
+// line. find_files and grep_files share this behavior because both traverse
+// through walkFiles.
 const maxWalkErrors = 4
 
 // printMode identifies the kind of streaming output being rendered.
@@ -98,13 +103,6 @@ type ChatRequest struct {
 	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
 }
 
-type ChatResponse struct {
-	Choices []struct {
-		Message Message `json:"message"`
-	} `json:"choices"`
-	Usage *Usage `json:"usage,omitempty"`
-}
-
 type ChatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
@@ -114,12 +112,6 @@ type ChatStreamChunk struct {
 			ToolCalls        []ToolCall `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
-}
-
-type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
 }
 
 // --- Tool System ---
@@ -437,7 +429,8 @@ func newTextFile(content string) *textFile {
 	return &textFile{content: content, offsets: offsets}
 }
 
-// total returns the number of lines (matching the existing len(lines) count).
+// total returns the number of lines in the file, counting the empty final line
+// that a trailing newline produces.
 func (t *textFile) total() int { return len(t.offsets) }
 
 // line returns the text of the 1-based line n, with its trailing newline
@@ -452,7 +445,8 @@ func (t *textFile) line(n int) string {
 }
 
 // normalizeRange turns the tool-facing (start, end) pair — where 0 means
-// "unset" — into concrete 1-based inclusive bounds clamped to the file.
+// "unset" and a negative is rejected — into concrete 1-based inclusive bounds
+// clamped to the file.
 func (t *textFile) normalizeRange(start, end int) (int, int, error) {
 	if start < 0 || end < 0 {
 		return 0, 0, fmt.Errorf("start_line and end_line must be positive")
@@ -473,9 +467,9 @@ func (t *textFile) normalizeRange(start, end int) (int, int, error) {
 }
 
 // slice returns the text of lines [start..end] (1-based, inclusive) as a
-// single subslice of the raw content. Because endOffset(end) sits just past
-// line end's newline, this reproduces the same text strings.Join would produce
-// without re-inserting newlines.
+// single subslice of the raw content. The newlines between the lines come
+// along for free, and so does the newline that terminates line end when one is
+// there — callers wanting the joined-lines form must strip it themselves.
 func (t *textFile) slice(start, end int) string {
 	return t.content[t.startOffset(start):t.endOffset(end)]
 }
@@ -528,9 +522,10 @@ func (t *textFile) fitRange(start, end, maxBytes int) int {
 
 // matchLinesFor locates search within lines [startLine..endLine] and returns
 // the parsed file together with the 1-based, inclusive range of COMPLETE lines
-// that the match spans. Callers use the returned textFile and line range to
-// slice the file on line boundaries (via startOffset/endOffset), so both reads
-// and edits always operate on whole lines and the file is parsed exactly once.
+// that the match spans. The file is parsed once here so both callers work from
+// the same offset table: write_block edits the span from startOffset(matchStart)
+// to endOffset(matchEnd), which is why an edit never splits a line, while
+// read_block starts at matchStart and walks forward line by line instead.
 func matchLinesFor(path string, search string, startLine, endLine int) (tf *textFile, matchStart, matchEnd int, err error) {
 	// An empty search would match at offset 0 everywhere, and the duplicate
 	// check below would slice past the end of an empty search area. Neither
@@ -572,6 +567,20 @@ func matchLinesFor(path string, search string, startLine, endLine int) (tf *text
 	return tf, matchStart, matchEnd, nil
 }
 
+// resolvePath turns a tool-supplied path into an absolute path, and is the
+// single gate enforcing what the system prompt promises: the model can reach
+// files inside the working directory and nothing else — not paths above it,
+// not hidden files or directories.
+//
+// Symlinks are resolved before the containment check so a link inside the
+// working directory cannot stand in for a file outside it. A path that does
+// not exist yet (the target of a new write_file) has nothing to resolve, so it
+// is screened as written.
+//
+// Containment is tested on the path relative to the working directory: a
+// leading ".." means it escaped, and a leading separator means Rel could not
+// express it as relative at all. Each remaining component is then screened for
+// a hidden name.
 func resolvePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("the 'path' argument may not be missing or empty")
@@ -641,15 +650,24 @@ func pathArg(argsJSON, toolName string) (string, error) {
 	return resolvePath(args.Path)
 }
 
-// fileMatch is a walk hit: the path relative to the walk root plus the file
-// size, taken from the DirEntry that WalkDir already stat'd.
+// fileMatch is a walkAndFilter hit: the path relative to the walk root plus
+// the file size, taken from the DirEntry WalkDir already stat'd.
 type fileMatch struct {
 	rel  string
 	size int64
 }
 
-func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, error)) ([]fileMatch, error) {
-	var matches []fileMatch
+// walkFiles walks root and calls visit for every regular file, skipping
+// directories themselves and anything hidden (a hidden directory is skipped
+// whole). It is the shared traversal behind find_files and grep_files, so both
+// see the same set of files and report walk errors the same way.
+//
+// A per-entry error (an unreadable directory, a broken symlink) is reported to
+// stderr up to maxWalkErrors times; the rest are summarized in a single
+// suppressed-count line and the walk continues past it. An error from visit
+// aborts the walk and is returned, as is a failure at the root itself; neither
+// of today's callers produces one.
+func walkFiles(root string, visit func(path string, d os.DirEntry) error) error {
 	var errorCount int
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -669,6 +687,22 @@ func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, e
 		if d.IsDir() {
 			return nil
 		}
+		return visit(path, d)
+	})
+
+	if errorCount > maxWalkErrors {
+		fmt.Fprintf(os.Stderr, "\033[31m[Walk Error]\033[0m Suppressed %d additional errors\n", errorCount-maxWalkErrors)
+	}
+
+	return err
+}
+
+// walkAndFilter collects the walkFiles hits for which filter reports a match,
+// recording each one relative to root.
+func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, error)) ([]fileMatch, error) {
+	var matches []fileMatch
+
+	err := walkFiles(root, func(path string, d os.DirEntry) error {
 		if matched, err := filter(path, d); err == nil && matched {
 			rel, _ := filepath.Rel(root, path)
 			var size int64
@@ -679,10 +713,6 @@ func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, e
 		}
 		return nil
 	})
-
-	if errorCount > maxWalkErrors {
-		fmt.Fprintf(os.Stderr, "\033[31m[Walk Error]\033[0m Suppressed %d additional errors\n", errorCount-maxWalkErrors)
-	}
 
 	return matches, err
 }
@@ -733,7 +763,7 @@ func handleReadFile(argsJSON string) (string, error) {
 
 	out := tf.slice(start, end)
 	// slice keeps the newline that terminates line `end`; drop it when more
-	// lines follow so the result matches the previous strings.Join output.
+	// lines follow so a partial read does not end on a stray blank line.
 	if end < total {
 		out = strings.TrimSuffix(out, "\n")
 	}
@@ -804,11 +834,14 @@ func handleReadBlock(argsJSON string) (string, error) {
 			blockBytes += len(line) + 1
 			continue
 		}
-		if blockBytes+len(line)+1 > maxReadBytes {
-			truncated = true
+		// The indent test comes first: a dedented line ends the block on its
+		// own, so it must not be reported as a byte-budget truncation merely
+		// because it would also have overflowed the budget.
+		if strings.TrimSpace(line) != "" && indentOf(line) <= startIndent {
 			break
 		}
-		if strings.TrimSpace(line) != "" && indentOf(line) <= startIndent {
+		if blockBytes+len(line)+1 > maxReadBytes {
+			truncated = true
 			break
 		}
 		block = append(block, line)
@@ -980,6 +1013,11 @@ func truncateLine(line string) string {
 	return fmt.Sprintf("%s [... line continues, %d more bytes ...]", kept, len(line)-len(kept))
 }
 
+// handleGrepFiles searches every readable text file under the path for a
+// literal string, reporting hits as 'file:line: content'. The match counts are
+// capped per file and overall (see maxGrepMatches*), and each reported line is
+// capped by truncateLine, so a single enormous file cannot crowd out the rest
+// of the tree.
 func handleGrepFiles(argsJSON string) (string, error) {
 	args, err := parseArgs[GrepFilesArgs](argsJSON)
 	if err != nil {
@@ -996,28 +1034,10 @@ func handleGrepFiles(argsJSON string) (string, error) {
 	totalMatches := 0
 	totalSuppressed := 0
 
-	walkErr := filepath.WalkDir(safePath, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if strings.HasPrefix(d.Name(), ".") {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		if info.Size() > maxFileSize {
-			return nil
-		}
-
+	walkErr := walkFiles(safePath, func(path string, _ os.DirEntry) error {
+		// readTextFile enforces maxFileSize, so an oversized file errors here
+		// and is skipped: a file too big to read is too big to grep line by
+		// line. Checking the size separately first would just stat it twice.
 		tf, err := readTextFile(path)
 		if err != nil {
 			return nil
@@ -1118,10 +1138,18 @@ func handleDeleteDir(argsJSON string) (string, error) {
 	return "Success", nil
 }
 
+// hasGoCommand reports whether the prompt authorizes write operations. The
+// token must appear as its own whitespace-delimited word, so "/go" inside a
+// path or a sentence does not grant permission. executeTool enforces the
+// result, and the system prompt states the rule to the model.
 func hasGoCommand(prompt string) bool {
 	return slices.Contains(strings.Fields(prompt), "/go")
 }
 
+// executeTool dispatches one tool call through the registry, applying the write
+// gate: a tool marked IsWrite runs only when this turn's prompt granted
+// permission. The error it returns becomes the tool response the model reads,
+// so the message is written to be actionable, not just descriptive.
 func executeTool(tc ToolCall, writesAllowed bool) (string, error) {
 	reg, ok := toolRegistry[tc.Function.Name]
 	if !ok {
@@ -1135,6 +1163,17 @@ func executeTool(tc ToolCall, writesAllowed bool) (string, error) {
 	return reg.Handler(tc.Function.Arguments)
 }
 
+// callEndpointStreaming sends one turn's messages to the chat completions
+// endpoint and reassembles the streamed reply into a single assistant message.
+//
+// Text is printed as it arrives rather than buffered, so reasoning and content
+// appear live and output can already be on screen by the time an error surfaces
+// mid-stream. On error the partially assembled message is discarded by the
+// caller; whatever was printed stays printed.
+//
+// ctx is what bounds the request: cancelling it stops the read loop and ends
+// the turn. isFirstTurn only controls whether a leading newline separates this
+// turn's output from the banner.
 func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, isFirstTurn bool) (Message, error) {
 	reqBody := ChatRequest{
 		Model:           cfg.Model,
@@ -1254,13 +1293,23 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 			assistantMsg.Content += delta.Content
 
 			for _, tc := range delta.ToolCalls {
-				// Decide which call this delta belongs to. Providers that number
-				// their calls use index; providers that omit index entirely were
-				// previously dropped. A delta continues the call at its slot
-				// unless it brings a different ID — a continuation never re-sends
-				// one — in which case the provider is starting a new call (some
-				// reuse a single index for sequential calls) and it gets the next
-				// free slot.
+				// Decide which accumulated call this delta belongs to. Slots are
+				// keyed by index, but providers differ in how much help they
+				// give, so the default is the next slot past every one seen so
+				// far (maxIdx + 1) and each quirk is corrected from there:
+				//
+				//   - A provider that numbers its calls uses its index as the
+				//     slot. If that slot already holds a call with a different
+				//     ID, the provider is reusing a single index for sequential
+				//     calls, so this delta opens a new call past maxIdx instead.
+				//
+				//   - A provider that omits index gives no slot to continue into,
+				//     so its default slot is empty: fall back to maxIdx, the call
+				//     most recently opened, unless the delta and that call both
+				//     carry IDs and disagree, which means a new call began.
+				//
+				// A continuation never re-sends an ID, so a differing ID is the
+				// only signal for "this is a new call".
 				idx := maxIdx + 1
 				if tc.Index != nil {
 					idx = *tc.Index
@@ -1280,7 +1329,8 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 
 				existing, ok := toolCallsMap[idx]
 				if !ok {
-					// Create a new ToolCall copy to avoid pointer issues with loop variables
+					// Copy the delta rather than storing a pointer to the loop
+					// variable, which the next iteration overwrites.
 					cp := tc
 					toolCallsMap[idx] = &cp
 					continue
@@ -1414,10 +1464,9 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// One goroutine owns sigChan, so no two selects can race for the same
-	// signal. It republishes each interrupt to interruptChan, which the current
-	// turn and readLine both listen to; interruptChan is drained before every
-	// read, so a signal that arrives while nothing is listening cannot cancel
-	// the next turn or end the session.
+	// signal. It republishes each interrupt to interruptChan, which readLine and
+	// the current turn both listen to; drainInterrupt handles signals that
+	// arrive while nothing is listening.
 	interruptChan := make(chan struct{}, 1)
 	go func() {
 		for range sigChan {
@@ -1519,6 +1568,10 @@ func main() {
 		writesAllowed := hasGoCommand(userPrompt)
 		fmt.Println()
 
+		// Each turn gets its own context so one Ctrl-C ends exactly one turn.
+		// This goroutine turns the single published interrupt into cancel(); a
+		// turn that finishes on its own closes turnCtx and lets the goroutine
+		// exit instead, so it never outlives the turn it belongs to.
 		turnCtx, cancel := context.WithCancel(context.Background())
 
 		go func() {
