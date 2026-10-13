@@ -1346,6 +1346,16 @@ func printVersion() {
 	fmt.Println(licenseText)
 }
 
+// drainInterrupt discards an interrupt that arrived while nothing was
+// listening for it, so a leftover signal can neither cancel the next turn nor
+// end the session.
+func drainInterrupt(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+	}
+}
+
 func main() {
 	cfg := Config{
 		BaseURL:         os.Getenv("OPENAI_BASE_URL"),
@@ -1404,6 +1414,21 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
+	// One goroutine owns sigChan, so no two selects can race for the same
+	// signal. It republishes each interrupt to interruptChan, which the current
+	// turn and readLine both listen to; interruptChan is drained before every
+	// read, so a signal that arrives while nothing is listening cannot cancel
+	// the next turn or end the session.
+	interruptChan := make(chan struct{}, 1)
+	go func() {
+		for range sigChan {
+			select {
+			case interruptChan <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
 	fmt.Println("\033[1mLLM Terminal Bootstrap (Ctrl-C to interrupt or exit)\033[0m")
 	fmt.Printf("\033[1mURL:\033[0m %s/chat/completions\n", cfg.BaseURL)
 	if cfg.Model != "" {
@@ -1442,35 +1467,48 @@ func main() {
 		}
 	}()
 
-	for {
-		fmt.Print("\n$ ")
-		var userPrompt string
+	// readLine prints prompt and waits for one line, returning ok=false when the
+	// session should end: Ctrl-C, or stdin closed. The background goroutine is
+	// the sole reader of `reader`, so every read — including the continuation
+	// lines of a multiline block — goes through inputChan; calling reader from
+	// here too would use the same bufio.Reader from two goroutines and
+	// interleave/lose lines.
+	readLine := func(prompt string) (string, bool) {
+		drainInterrupt(interruptChan)
+		fmt.Print(prompt)
 		select {
-		case <-sigChan:
-			return
+		case <-interruptChan:
+			return "", false
 		case err := <-errChan:
-			if err == io.EOF {
-				return
+			if err != io.EOF {
+				fmt.Printf("\033[31m[Error]\033[0m reading input: %v\n", err)
 			}
-			fmt.Printf("\033[31m[Error]\033[0m reading input: %v\n", err)
-			return
+			return "", false
 		case line := <-inputChan:
-			userPrompt = strings.TrimSpace(line)
-			if userPrompt == `"""` {
-				var buffer bytes.Buffer
-				for {
-					fmt.Print("> ")
-					l, err := reader.ReadString('\n')
-					if err != nil {
-						break
-					}
-					if strings.TrimSpace(l) == `"""` {
-						break
-					}
-					buffer.WriteString(l)
+			return line, true
+		}
+	}
+
+	for {
+		line, ok := readLine("\n$ ")
+		if !ok {
+			return
+		}
+		userPrompt := strings.TrimSpace(line)
+
+		if userPrompt == `"""` {
+			var buffer bytes.Buffer
+			for {
+				l, ok := readLine("> ")
+				if !ok {
+					return
 				}
-				userPrompt = strings.TrimSpace(buffer.String())
+				if strings.TrimSpace(l) == `"""` {
+					break
+				}
+				buffer.WriteString(l)
 			}
+			userPrompt = strings.TrimSpace(buffer.String())
 		}
 
 		if userPrompt == "" {
@@ -1485,7 +1523,7 @@ func main() {
 
 		go func() {
 			select {
-			case <-sigChan:
+			case <-interruptChan:
 				cancel()
 			case <-turnCtx.Done():
 			}
@@ -1519,13 +1557,18 @@ func main() {
 			}
 
 			for _, tc := range assistantMsg.ToolCalls {
-				if turnCtx.Err() != nil {
-					break
-				}
-				result, err := executeTool(tc, writesAllowed)
-				if err != nil {
-					fmt.Printf("\033[31m[Error]\033[0m %s: %v\n", tc.Function.Name, err)
-					result = fmt.Sprintf("Error: %v", err)
+				// Every tool_call in the assistant message needs a matching
+				// tool response, including calls an interrupt skipped: an
+				// assistant message with unanswered tool_calls makes the next
+				// request fail, so one Ctrl-C would poison the whole session.
+				result := "Error: interrupted by the user before this tool ran"
+				if turnCtx.Err() == nil {
+					var err error
+					result, err = executeTool(tc, writesAllowed)
+					if err != nil {
+						fmt.Printf("\033[31m[Error]\033[0m %s: %v\n", tc.Function.Name, err)
+						result = fmt.Sprintf("Error: %v", err)
+					}
 				}
 				messages = append(messages, Message{
 					Role:       "tool",
