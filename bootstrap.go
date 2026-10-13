@@ -23,7 +23,37 @@ var licenseText string
 
 // --- Constants ---
 
-const MaxFileSize = 1 * 1024 * 1024 // 1MB limit for reading/grepping files
+const maxFileSize = 1 * 1024 * 1024 // 1MB limit for reading/grepping files
+
+// maxReadBytes caps the content returned by read_file / read_block before
+// truncation. The budget is in bytes rather than lines because token cost
+// tracks bytes, not lines: a 300KB single-line minified file is unusable no
+// matter how few lines it has, while 2000 short lines are cheap.
+const maxReadBytes = 32 * 1024
+
+// grep_files limits: cap matches per file and overall to avoid flooding context.
+// maxGrepLineBytes caps each matched line too: a minified file is a single
+// huge line, so counting matches alone is not enough to bound the result.
+const maxGrepMatchesPerFile = 10
+const maxGrepMatchesTotal = 50
+const maxGrepLineBytes = 500
+
+// maxFindResults caps find_files output: a broad pattern over a large tree
+// would otherwise flood the transcript with paths.
+const maxFindResults = 200
+
+// maxWalkErrors caps how many filepath.WalkDir errors are printed before the
+// remainder are summarized in a single suppressed-count line.
+const maxWalkErrors = 4
+
+// printMode identifies the kind of streaming output being rendered.
+type printMode int
+
+const (
+	modeNone      printMode = iota // no output yet
+	modeReasoning                  // reasoning text (dimmed)
+	modeContent                    // content text (plain)
+)
 
 // --- OpenAI API Types ---
 
@@ -332,8 +362,8 @@ func splitFileOnString(path string, search string, startLine, endLine int) (befo
 	if err != nil {
 		return "", "", "", err
 	}
-	if info.Size() > MaxFileSize {
-		return "", "", "", fmt.Errorf("file is too large to process (%d bytes, max %d)", info.Size(), MaxFileSize)
+	if info.Size() > maxFileSize {
+		return "", "", "", fmt.Errorf("file is too large to process (%d bytes, max %d)", info.Size(), maxFileSize)
 	}
 
 	content, err := os.ReadFile(path)
@@ -437,7 +467,7 @@ func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, e
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			errorCount++
-			if errorCount <= 4 {
+			if errorCount <= maxWalkErrors {
 				fmt.Fprintf(os.Stderr, "\033[31m[Walk Error]\033[0m %s: %v\n", path, err)
 			}
 			return nil
@@ -458,8 +488,8 @@ func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, e
 		return nil
 	})
 
-	if errorCount > 4 {
-		fmt.Fprintf(os.Stderr, "\033[31m[Walk Error]\033[0m Suppressed %d additional errors\n", errorCount-4)
+	if errorCount > maxWalkErrors {
+		fmt.Fprintf(os.Stderr, "\033[31m[Walk Error]\033[0m Suppressed %d additional errors\n", errorCount-maxWalkErrors)
 	}
 
 	return matches, err
@@ -481,8 +511,8 @@ func handleReadFile(argsJSON string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if info.Size() > MaxFileSize {
-		return "", fmt.Errorf("file is too large to read (%d bytes, max %d)", info.Size(), MaxFileSize)
+	if info.Size() > maxFileSize {
+		return "", fmt.Errorf("file is too large to read (%d bytes, max %d)", info.Size(), maxFileSize)
 	}
 
 	b, err := os.ReadFile(safePath)
@@ -669,7 +699,7 @@ func handleGrepFiles(argsJSON string) (string, error) {
 		if err != nil {
 			return false, err
 		}
-		if info.Size() > MaxFileSize {
+		if info.Size() > maxFileSize {
 			return false, nil
 		}
 
