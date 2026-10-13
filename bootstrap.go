@@ -170,7 +170,7 @@ var toolList = []ToolRegistration{
 	},
 	{
 		Name:        "list_dir",
-		Description: "List directory files",
+		Description: "List directory files. Each entry is shown with its size (e.g. 'main.go 12.3K'); directories are shown without a size. Files too large to return in a single read_file call are flagged, which is the signal to use grep_files or read_file with line ranges instead of a bulk read.",
 		Parameters: JSObject{
 			"type": "object",
 			"properties": JSObject{
@@ -183,7 +183,7 @@ var toolList = []ToolRegistration{
 	},
 	{
 		Name:        "find_files",
-		Description: "Search for files whose names match a glob pattern",
+		Description: "Search for files whose names match a glob pattern. Results are shown with size (e.g. 'cmd/main.go 12.3K'); files too large to return in a single read_file call are flagged.",
 		Parameters: JSObject{
 			"type": "object",
 			"properties": JSObject{
@@ -197,7 +197,7 @@ var toolList = []ToolRegistration{
 	},
 	{
 		Name:        "grep_files",
-		Description: "Search for files containing a specified string",
+		Description: "Search for lines containing a specified string. Returns matching lines as 'file:line: content'. Per-file and total match limits apply; suppressed matches are noted.",
 		Parameters: JSObject{
 			"type": "object",
 			"properties": JSObject{
@@ -603,8 +603,15 @@ func unmarshalStrict(data []byte, target any) error {
 	return decoder.Decode(target)
 }
 
-func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, error)) ([]string, error) {
-	var matches []string
+// fileMatch is a walk hit: the path relative to the walk root plus the file
+// size, taken from the DirEntry that WalkDir already stat'd.
+type fileMatch struct {
+	rel  string
+	size int64
+}
+
+func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, error)) ([]fileMatch, error) {
+	var matches []fileMatch
 	var errorCount int
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -626,7 +633,11 @@ func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, e
 		}
 		if matched, err := filter(path, d); err == nil && matched {
 			rel, _ := filepath.Rel(root, path)
-			matches = append(matches, rel)
+			var size int64
+			if info, err := d.Info(); err == nil {
+				size = info.Size()
+			}
+			matches = append(matches, fileMatch{rel: rel, size: size})
 		}
 		return nil
 	})
@@ -858,11 +869,41 @@ func handleListDir(argsJSON string) (string, error) {
 		}
 		name := e.Name()
 		if e.IsDir() {
-			name += "/"
+			names = append(names, name+"/")
+			continue
 		}
-		names = append(names, name)
+		// DirEntry.Info is served from the stat ReadDir already performed, so
+		// reporting sizes costs no extra I/O.
+		var size int64
+		if info, err := e.Info(); err == nil {
+			size = info.Size()
+		}
+		names = append(names, formatSizeLine(name, size))
 	}
 	return strings.Join(names, "\n"), nil
+}
+
+// formatSize renders a byte count in a form that requires no arithmetic to act
+// on: 512B, 4.1K, 1.2M.
+func formatSize(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%dB", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1fK", float64(n)/1024)
+	default:
+		return fmt.Sprintf("%.1fM", float64(n)/(1024*1024))
+	}
+}
+
+// formatSizeLine renders "name  4.1K", flagging files that cannot come back in
+// a single read_file call so the caller reaches for grep_files or a line range
+// instead of a bulk read.
+func formatSizeLine(name string, size int64) string {
+	if size > maxReadBytes {
+		return fmt.Sprintf("%s  %s  (large file, use grep_files or line ranges)", name, formatSize(size))
+	}
+	return fmt.Sprintf("%s  %s", name, formatSize(size))
 }
 
 func handleFindFiles(argsJSON string) (string, error) {
@@ -883,7 +924,28 @@ func handleFindFiles(argsJSON string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.Join(matches, "\n"), nil
+	out := make([]string, 0, min(len(matches), maxFindResults))
+	for i, m := range matches {
+		if i >= maxFindResults {
+			break
+		}
+		out = append(out, formatSizeLine(m.rel, m.size))
+	}
+	if len(matches) > maxFindResults {
+		out = append(out, fmt.Sprintf("[... %d more matches suppressed (%d result limit); narrow the pattern or the search path ...]", len(matches)-maxFindResults, maxFindResults))
+	}
+	return strings.Join(out, "\n"), nil
+}
+
+// truncateLine cuts a matched line to maxGrepLineBytes on a rune boundary and
+// reports how much was dropped, so one enormous line cannot dominate the
+// result the way an uncapped match count would allow.
+func truncateLine(line string) string {
+	if len(line) <= maxGrepLineBytes {
+		return line
+	}
+	kept := strings.ToValidUTF8(line[:maxGrepLineBytes], "")
+	return fmt.Sprintf("%s [... line continues, %d more bytes ...]", kept, len(line)-len(kept))
 }
 
 func handleGrepFiles(argsJSON string) (string, error) {
@@ -898,37 +960,78 @@ func handleGrepFiles(argsJSON string) (string, error) {
 		return "", err
 	}
 
-	matches, err := walkAndFilter(safePath, func(path string, d os.DirEntry) (bool, error) {
+	var results []string
+	totalMatches := 0
+	totalSuppressed := 0
+
+	walkErr := filepath.WalkDir(safePath, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+
 		info, err := d.Info()
 		if err != nil {
-			return false, err
+			return nil
 		}
 		if info.Size() > maxFileSize {
-			return false, nil
+			return nil
 		}
 
-		f, err := os.Open(path)
+		tf, err := readTextFile(path)
 		if err != nil {
-			return false, err
+			return nil
 		}
-		defer f.Close()
 
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			if strings.Contains(scanner.Text(), args.Query) {
-				return true, nil
+		rel, _ := filepath.Rel(safePath, path)
+
+		fileMatches := 0
+		fileSuppressed := 0
+		for n := 1; n <= tf.total(); n++ {
+			line := tf.line(n)
+			if strings.Contains(line, args.Query) {
+				if fileMatches >= maxGrepMatchesPerFile {
+					fileSuppressed++
+					continue
+				}
+				if totalMatches >= maxGrepMatchesTotal {
+					totalSuppressed++
+					continue
+				}
+				results = append(results, fmt.Sprintf("%s:%d: %s", rel, n, truncateLine(line)))
+				fileMatches++
+				totalMatches++
 			}
 		}
-		if err := scanner.Err(); err != nil {
-			return false, err
+
+		if fileSuppressed > 0 {
+			results = append(results, fmt.Sprintf("%s: [... %d more matches in this file suppressed ...]", rel, fileSuppressed))
 		}
 
-		return false, nil
+		return nil
 	})
-	if err != nil {
-		return "", err
+
+	if walkErr != nil {
+		return "", walkErr
 	}
-	return strings.Join(matches, "\n"), nil
+
+	if totalSuppressed > 0 {
+		results = append(results, fmt.Sprintf("[... %d additional matches suppressed (total limit %d) ...]", totalSuppressed, maxGrepMatchesTotal))
+	}
+
+	if len(results) == 0 {
+		return "No matches found.", nil
+	}
+
+	return strings.Join(results, "\n"), nil
 }
 
 func handleDeleteFile(argsJSON string) (string, error) {
