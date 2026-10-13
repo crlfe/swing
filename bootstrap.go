@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"unicode"
@@ -138,11 +139,13 @@ type ToolRegistration struct {
 var toolList = []ToolRegistration{
 	{
 		Name:        "read_file",
-		Description: "Read file contents",
+		Description: "Read file contents. Optionally restrict to a range of lines with start_line/end_line (1-based). Results are capped by a byte limit; if the file (or the requested range) exceeds it, the result is truncated at a line boundary and a notice is appended giving the line number to continue from.",
 		Parameters: JSObject{
 			"type": "object",
 			"properties": JSObject{
-				"path": JSObject{"type": "string"},
+				"path":       JSObject{"type": "string"},
+				"start_line": JSObject{"type": "integer", "description": "1-based start line (defaults to 1)"},
+				"end_line":   JSObject{"type": "integer", "description": "1-based end line (defaults to end of file)"},
 			},
 			"required": []string{"path"},
 		},
@@ -322,6 +325,12 @@ type ReadBlockArgs struct {
 	EndLine   int    `json:"end_line,omitempty"`
 }
 
+type ReadFileArgs struct {
+	Path      string `json:"path"`
+	StartLine int    `json:"start_line,omitempty"`
+	EndLine   int    `json:"end_line,omitempty"`
+}
+
 type PathArgs struct {
 	Path string `json:"path"`
 }
@@ -346,16 +355,20 @@ func sanitizeForTerminal(s string) string {
 	}, s)
 }
 
+// getRangeString renders the tool-facing range annotation for a log line.
+// Unset bounds (0) render as "start"/"end" so every case shares one format.
 func getRangeString(startLine, endLine int) string {
 	if startLine <= 0 && endLine <= 0 {
 		return ""
 	}
-	if startLine > 0 && endLine == 0 {
-		return fmt.Sprintf(" (lines %d-end)", startLine)
-	} else if startLine == 0 && endLine > 0 {
-		return fmt.Sprintf(" (lines start-%d)", endLine)
+	start, end := "start", "end"
+	if startLine > 0 {
+		start = strconv.Itoa(startLine)
 	}
-	return fmt.Sprintf(" (lines %d-%d)", startLine, endLine)
+	if endLine > 0 {
+		end = strconv.Itoa(endLine)
+	}
+	return fmt.Sprintf(" (lines %s-%s)", start, end)
 }
 
 // --- Text File Line Access Helper ---
@@ -626,30 +639,65 @@ func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, e
 }
 
 func handleReadFile(argsJSON string) (string, error) {
-	var args PathArgs
+	var args ReadFileArgs
 	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	logToolCall("read_file %q", args.Path)
+	rangeStr := getRangeString(args.StartLine, args.EndLine)
+	logToolCall("read_file %q%s", args.Path, rangeStr)
 	safePath, err := resolvePath(args.Path)
 	if err != nil {
 		return "", err
 	}
 
-	info, err := os.Stat(safePath)
+	tf, err := readTextFile(safePath)
 	if err != nil {
 		return "", err
-	}
-	if info.Size() > maxFileSize {
-		return "", fmt.Errorf("file is too large to read (%d bytes, max %d)", info.Size(), maxFileSize)
 	}
 
-	b, err := os.ReadFile(safePath)
+	total := tf.total()
+
+	start, end, err := tf.normalizeRange(args.StartLine, args.EndLine)
 	if err != nil {
 		return "", err
 	}
-	return string(b), nil
+
+	// Auto-truncate when the resulting range exceeds the byte budget. The cut
+	// lands on a line boundary so the next call can resume at end+1.
+	startOff := tf.startOffset(start)
+	if tf.endOffset(start)-startOff > maxReadBytes {
+		// Line `start` alone is larger than the budget (minified or generated
+		// single-line files). There is no line boundary to cut on, so return a
+		// byte prefix and point the caller at a search tool instead. The cut can
+		// land inside a multi-byte rune, so strip any partial one at the end.
+		prefix := strings.ToValidUTF8(tf.content[startOff:startOff+maxReadBytes], "")
+		return prefix +
+			fmt.Sprintf("\n[... line %d alone exceeds the %d byte limit; showing its first %d bytes. This file cannot be read line-by-line — use grep_files or read_block to locate content ...]", start, maxReadBytes, maxReadBytes), nil
+	}
+
+	truncated := false
+	if fitted := tf.fitRange(start, end, maxReadBytes); fitted < end {
+		end = fitted
+		truncated = true
+	}
+
+	out := tf.slice(start, end)
+	// slice keeps the newline that terminates line `end`; drop it when more
+	// lines follow so the result matches the previous strings.Join output.
+	if end < total {
+		out = strings.TrimSuffix(out, "\n")
+	}
+
+	if truncated {
+		out += fmt.Sprintf("\n[... showing lines %d-%d of %d (%d byte limit); continue with start_line=%d ...]", start, end, total, maxReadBytes, end+1)
+	} else if end < total {
+		// The range ended because the caller asked for it, not because of the
+		// byte budget; report the file size without attributing the cut to it.
+		out += fmt.Sprintf("\n[... end of requested range; file has %d lines, continue with start_line=%d if needed ...]", total, end+1)
+	}
+
+	return out, nil
 }
 
 // indentOf returns the width of a line's leading run of spaces and tabs.
@@ -678,28 +726,56 @@ func handleReadBlock(argsJSON string) (string, error) {
 	}
 
 	// Walk the file line by line from the matched line using the offset table
-	// built once by matchLinesFor. Every line considered is a complete line,
-	// so the block is whole lines and startIndent is measured from the start of
-	// the matched line rather than from wherever the match happened to begin.
-	// A blank line never ends a block: it is kept, and the scan continues to
-	// the next non-blank line.
+	// built once by matchLinesFor. Every line we consider is a complete line,
+	// so the returned block is whole lines — except when the matched line
+	// alone exceeds the byte budget, which is cut on a rune boundary. A blank
+	// line never ends a block: it is kept, and the scan continues to the next
+	// non-blank line.
 	var block []string
 	var startIndent int
+	blockBytes := 0
+	truncated := false
+	firstLineCut := false
+	lastIncluded := matchStart
 
 	for n := matchStart; n <= tf.total(); n++ {
 		line := tf.line(n)
 		if n == matchStart {
-			block = append(block, line)
 			startIndent = indentOf(line)
+			if len(line) > maxReadBytes {
+				// The matched line alone exceeds the budget (minified or
+				// generated single-line files). There is no line boundary to
+				// cut on, so return a rune-safe prefix of it.
+				block = append(block, strings.ToValidUTF8(line[:maxReadBytes], ""))
+				truncated = true
+				firstLineCut = true
+				break
+			}
+			block = append(block, line)
+			blockBytes += len(line) + 1
 			continue
+		}
+		if blockBytes+len(line)+1 > maxReadBytes {
+			truncated = true
+			break
 		}
 		if strings.TrimSpace(line) != "" && indentOf(line) <= startIndent {
 			break
 		}
 		block = append(block, line)
+		blockBytes += len(line) + 1
+		lastIncluded = n
 	}
 
-	return strings.Join(block, "\n"), nil
+	out := strings.Join(block, "\n")
+	if truncated {
+		if firstLineCut {
+			out += fmt.Sprintf("\n[... line %d alone exceeds the %d byte limit; showing its first %d bytes ...]", matchStart, maxReadBytes, maxReadBytes)
+		} else {
+			out += fmt.Sprintf("\n[... block truncated at %d bytes after line %d; continue with read_file start_line=%d ...]", maxReadBytes, lastIncluded, lastIncluded+1)
+		}
+	}
+	return out, nil
 }
 
 func handleWriteBlock(argsJSON string) (string, error) {
