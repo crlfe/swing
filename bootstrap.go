@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -154,7 +153,7 @@ var toolList = []ToolRegistration{
 	},
 	{
 		Name:        "read_block",
-		Description: "Read a specific function or block of code. Use this to inspect a small part of a file before editing it. It finds the first line containing the query and reads all subsequent lines that are more deeply indented, stopping before the line where indentation returns to the starting level. Optional: start_line and end_line to constrain search.",
+		Description: "Read a specific function or block of code. Use this to inspect a small part of a file before editing it. It finds the line containing the query and reads all subsequent lines that are more deeply indented, stopping before the line where indentation returns to the starting level. The query must match exactly one location (it errors if it matches more than once); include enough context to make it unique. The result is a range of complete lines, capped by a byte limit; only the matched line itself may be cut mid-line when it alone exceeds the limit. Optional: start_line and end_line to constrain search.",
 		Parameters: JSObject{
 			"type": "object",
 			"properties": JSObject{
@@ -211,17 +210,17 @@ var toolList = []ToolRegistration{
 	},
 	{
 		Name:        "write_block",
-		Description: "Surgically replace a specific block of text in a file. This is the preferred way to edit existing files. You must provide the exact text of the block to be replaced (oldBlock) and the new text (newBlock). Optional: start_line and end_line to constrain search.",
+		Description: "Surgically replace a specific block of text in a file. This is the preferred way to edit existing files. You must provide the exact text of the block to be replaced (old_block) and the new text (new_block). The text must match exactly one location; include enough surrounding lines to make it unique. The match and the replacement are always aligned to complete lines: old_block identifies the whole lines it covers and new_block replaces exactly those lines. Optional: start_line and end_line to constrain search.",
 		Parameters: JSObject{
 			"type": "object",
 			"properties": JSObject{
 				"path":       JSObject{"type": "string"},
-				"oldBlock":   JSObject{"type": "string", "description": "The exact text to be replaced"},
-				"newBlock":   JSObject{"type": "string", "description": "The replacement text"},
+				"old_block":  JSObject{"type": "string", "description": "The exact text to be replaced"},
+				"new_block":  JSObject{"type": "string", "description": "The replacement text"},
 				"start_line": JSObject{"type": "integer", "description": "1-based start line for search"},
 				"end_line":   JSObject{"type": "integer", "description": "1-based end line for search"},
 			},
-			"required": []string{"path", "oldBlock", "newBlock"},
+			"required": []string{"path", "old_block", "new_block"},
 		},
 		IsWrite: true,
 		Handler: handleWriteBlock,
@@ -315,8 +314,8 @@ type WriteFileArgs struct {
 
 type WriteBlockArgs struct {
 	Path      string `json:"path"`
-	OldBlock  string `json:"oldBlock"`
-	NewBlock  string `json:"newBlock"`
+	OldBlock  string `json:"old_block"`
+	NewBlock  string `json:"new_block"`
 	StartLine int    `json:"start_line,omitempty"`
 	EndLine   int    `json:"end_line,omitempty"`
 }
@@ -610,10 +609,36 @@ func logToolCall(format string, args ...any) {
 	fmt.Printf("\033[32m[Tool]\033[0m "+format+"\n", args...)
 }
 
-func unmarshalStrict(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
+// parseArgs decodes a tool's JSON arguments into its argument struct,
+// rejecting unknown fields so a typo in a tool call surfaces as an argument
+// error rather than a silently ignored field.
+func parseArgs[T any](argsJSON string) (*T, error) {
+	var args T
+	// Some providers send "" rather than "{}" for a tool that takes no
+	// arguments; decoding that fails with "EOF" and the call is lost.
+	payload := strings.TrimSpace(argsJSON)
+	if payload == "" {
+		payload = "{}"
+	}
+	decoder := json.NewDecoder(strings.NewReader(payload))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(target)
+	if err := decoder.Decode(&args); err != nil {
+		return nil, fmt.Errorf("Argument error: %v", err)
+	}
+	return &args, nil
+}
+
+// pathArg handles the shared preamble of the path-only tools (list_dir,
+// create_dir, delete_file, delete_dir): parse the payload, log the call with
+// the raw path exactly as the model wrote it, then validate it. Logging before
+// resolving keeps failed paths visible in the transcript.
+func pathArg(argsJSON, toolName string) (string, error) {
+	args, err := parseArgs[PathArgs](argsJSON)
+	if err != nil {
+		return "", err
+	}
+	logToolCall("%s %q", toolName, args.Path)
+	return resolvePath(args.Path)
 }
 
 // fileMatch is a walk hit: the path relative to the walk root plus the file
@@ -663,9 +688,9 @@ func walkAndFilter(root string, filter func(path string, d os.DirEntry) (bool, e
 }
 
 func handleReadFile(argsJSON string) (string, error) {
-	var args ReadFileArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
+	args, err := parseArgs[ReadFileArgs](argsJSON)
+	if err != nil {
+		return "", err
 	}
 
 	rangeStr := getRangeString(args.StartLine, args.EndLine)
@@ -730,9 +755,9 @@ func indentOf(line string) int {
 }
 
 func handleReadBlock(argsJSON string) (string, error) {
-	var args ReadBlockArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
+	args, err := parseArgs[ReadBlockArgs](argsJSON)
+	if err != nil {
+		return "", err
 	}
 
 	firstLineOfQuery := newTextFile(args.Query).line(1)
@@ -803,9 +828,9 @@ func handleReadBlock(argsJSON string) (string, error) {
 }
 
 func handleWriteBlock(argsJSON string) (string, error) {
-	var args WriteBlockArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
+	args, err := parseArgs[WriteBlockArgs](argsJSON)
+	if err != nil {
+		return "", err
 	}
 
 	firstLine := newTextFile(args.OldBlock).line(1)
@@ -841,9 +866,9 @@ func handleWriteBlock(argsJSON string) (string, error) {
 }
 
 func handleWriteFile(argsJSON string) (string, error) {
-	var args WriteFileArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
+	args, err := parseArgs[WriteFileArgs](argsJSON)
+	if err != nil {
+		return "", err
 	}
 
 	logToolCall("write_file %q", args.Path)
@@ -860,13 +885,7 @@ func handleWriteFile(argsJSON string) (string, error) {
 }
 
 func handleListDir(argsJSON string) (string, error) {
-	var args PathArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
-	}
-
-	logToolCall("list_dir %q", args.Path)
-	safePath, err := resolvePath(args.Path)
+	safePath, err := pathArg(argsJSON, "list_dir")
 	if err != nil {
 		return "", err
 	}
@@ -920,9 +939,9 @@ func formatSizeLine(name string, size int64) string {
 }
 
 func handleFindFiles(argsJSON string) (string, error) {
-	var args FindFilesArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
+	args, err := parseArgs[FindFilesArgs](argsJSON)
+	if err != nil {
+		return "", err
 	}
 
 	logToolCall("find_files %q pattern %q", args.Path, args.Pattern)
@@ -962,9 +981,9 @@ func truncateLine(line string) string {
 }
 
 func handleGrepFiles(argsJSON string) (string, error) {
-	var args GrepFilesArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
+	args, err := parseArgs[GrepFilesArgs](argsJSON)
+	if err != nil {
+		return "", err
 	}
 
 	logToolCall("grep_files %q query %q", args.Path, args.Query)
@@ -1048,13 +1067,7 @@ func handleGrepFiles(argsJSON string) (string, error) {
 }
 
 func handleDeleteFile(argsJSON string) (string, error) {
-	var args PathArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
-	}
-
-	logToolCall("delete_file %q", args.Path)
-	safePath, err := resolvePath(args.Path)
+	safePath, err := pathArg(argsJSON, "delete_file")
 	if err != nil {
 		return "", err
 	}
@@ -1074,13 +1087,7 @@ func handleDeleteFile(argsJSON string) (string, error) {
 }
 
 func handleCreateDir(argsJSON string) (string, error) {
-	var args PathArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
-	}
-
-	logToolCall("create_dir %q", args.Path)
-	safePath, err := resolvePath(args.Path)
+	safePath, err := pathArg(argsJSON, "create_dir")
 	if err != nil {
 		return "", err
 	}
@@ -1092,13 +1099,7 @@ func handleCreateDir(argsJSON string) (string, error) {
 }
 
 func handleDeleteDir(argsJSON string) (string, error) {
-	var args PathArgs
-	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("Argument error: %v", err)
-	}
-
-	logToolCall("delete_dir %q", args.Path)
-	safePath, err := resolvePath(args.Path)
+	safePath, err := pathArg(argsJSON, "delete_dir")
 	if err != nil {
 		return "", err
 	}
@@ -1118,8 +1119,7 @@ func handleDeleteDir(argsJSON string) (string, error) {
 }
 
 func hasGoCommand(prompt string) bool {
-	re := regexp.MustCompile(`^/go(\s|$)|(^|\s)/go$`)
-	return re.MatchString(prompt)
+	return slices.Contains(strings.Fields(prompt), "/go")
 }
 
 func executeTool(tc ToolCall, writesAllowed bool) (string, error) {
@@ -1129,7 +1129,7 @@ func executeTool(tc ToolCall, writesAllowed bool) (string, error) {
 	}
 
 	if reg.IsWrite && !writesAllowed {
-		return "", fmt.Errorf("Permission Denied: The user must explicitly authorize write operations by including '/go' at the beginning or end of their prompt")
+		return "", fmt.Errorf("Permission Denied: The user must explicitly authorize write operations by including '/go' as a separate word in their prompt")
 	}
 
 	return reg.Handler(tc.Function.Arguments)
@@ -1328,17 +1328,17 @@ func trailingText(m Message) (string, bool) {
 }
 
 func printUsage() {
-	fmt.Println("Usage: bootstrap [OPTIONS]")
-	fmt.Println("")
-	fmt.Println("Options:")
-	fmt.Println("  -u, --url <url>           Endpoint base URL (typically includes '/v1')")
-	fmt.Println("  -m, --model <model>       Model to call")
-	fmt.Println("  -r, --reasoning <effort>  Reasoning effort (none, low, medium, high)")
-	fmt.Println("      --help                Show this help message")
-	fmt.Println("      --version             Show version and licensing information")
-	fmt.Println("")
-	fmt.Println("Set an API key, if needed, using the OPENAI_API_KEY environment variable.")
-	fmt.Println("Unspecified options use OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_REASONING_EFFORT.")
+	fmt.Println(`Usage: bootstrap [OPTIONS]
+
+Options:
+  -u, --url <url>           Endpoint base URL (typically includes '/v1')
+  -m, --model <model>       Model to call
+  -r, --reasoning <effort>  Reasoning effort (none, low, medium, high)
+      --help                Show this help message
+      --version             Show version and licensing information
+
+Set an API key, if needed, using the OPENAI_API_KEY environment variable.
+Unspecified options use OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_REASONING_EFFORT.`)
 }
 
 func printVersion() {
@@ -1365,6 +1365,20 @@ func main() {
 	}
 
 	args := os.Args[1:]
+
+	type flagTarget struct {
+		dest *string
+		name string // canonical long name used in error messages
+	}
+	valueFlags := map[string]flagTarget{
+		"-u":          {&cfg.BaseURL, "--url"},
+		"--url":       {&cfg.BaseURL, "--url"},
+		"-m":          {&cfg.Model, "--model"},
+		"--model":     {&cfg.Model, "--model"},
+		"-r":          {&cfg.ReasoningEffort, "--reasoning"},
+		"--reasoning": {&cfg.ReasoningEffort, "--reasoning"},
+	}
+
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--help":
@@ -1373,31 +1387,16 @@ func main() {
 		case "--version":
 			printVersion()
 			os.Exit(2)
-		case "-u", "--url":
-			if i+1 < len(args) {
-				cfg.BaseURL = args[i+1]
-				i++
-			} else {
-				fmt.Println("Error: --url requires a value")
-				os.Exit(1)
-			}
-		case "-m", "--model":
-			if i+1 < len(args) {
-				cfg.Model = args[i+1]
-				i++
-			} else {
-				fmt.Println("Error: --model requires a value")
-				os.Exit(1)
-			}
-		case "-r", "--reasoning":
-			if i+1 < len(args) {
-				cfg.ReasoningEffort = args[i+1]
-				i++
-			} else {
-				fmt.Println("Error: --reasoning requires a value")
-				os.Exit(1)
-			}
 		default:
+			if ft, ok := valueFlags[args[i]]; ok {
+				if i+1 >= len(args) {
+					fmt.Printf("Error: %s requires a value\n", ft.name)
+					os.Exit(1)
+				}
+				*ft.dest = args[i+1]
+				i++
+				continue
+			}
 			fmt.Printf("Unknown option: %s\n", args[i])
 			printUsage()
 			os.Exit(1)
@@ -1441,14 +1440,15 @@ func main() {
 	var messages []Message
 	messages = append(messages, Message{
 		Role: "system",
-		Content: "In a simple terminal chat." +
+		Content: "You are a coding assistant that reads and edits files in the current working directory. " +
+			"Paths are relative to it; you cannot access files outside it or hidden files (names starting with a dot)." +
 			"\n\n" +
 			"Prefer surgical updates to files over full rewrites: " +
 			"Use read_block to locate the specific section you want to change, " +
 			"then use write_block to replace only that specific block." +
 			"\n\n" +
 			"You can not write to the filesystem without permission from the user. " +
-			"They grant this permission by putting '/go' at the beginning or end of a prompt. " +
+			"They grant this permission by putting '/go' as a separate word in their prompt. " +
 			"Do not make changes beyond those authorized by the '/go' prompt.",
 	})
 
