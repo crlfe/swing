@@ -283,13 +283,26 @@ var toolList = []ToolRegistration{
 
 var toolRegistry map[string]ToolRegistration
 
+// toolSchemas is the wire form of toolList sent with every request. Built once
+// alongside the registry so the per-turn request path does not rebuild it.
+var toolSchemas []Tool
+
 func init() {
 	toolRegistry = make(map[string]ToolRegistration, len(toolList))
+	toolSchemas = make([]Tool, 0, len(toolList))
 	for _, reg := range toolList {
 		if _, exists := toolRegistry[reg.Name]; exists {
 			panic("duplicate tool name: " + reg.Name)
 		}
 		toolRegistry[reg.Name] = reg
+		toolSchemas = append(toolSchemas, Tool{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        reg.Name,
+				Description: reg.Description,
+				Parameters:  reg.Parameters,
+			},
+		})
 	}
 }
 
@@ -342,9 +355,9 @@ type Config struct {
 	ReasoningEffort string
 }
 
-var httpClient = &http.Client{
-	Timeout: 0,
-}
+// No client timeout: a streamed turn can stay open for minutes, and the
+// per-turn context is what actually bounds a request.
+var httpClient = &http.Client{}
 
 func sanitizeForTerminal(s string) string {
 	return strings.Map(func(r rune) rune {
@@ -1122,26 +1135,11 @@ func executeTool(tc ToolCall, writesAllowed bool) (string, error) {
 	return reg.Handler(tc.Function.Arguments)
 }
 
-func getTools() []Tool {
-	tools := make([]Tool, 0, len(toolList))
-	for _, reg := range toolList {
-		tools = append(tools, Tool{
-			Type: "function",
-			Function: FunctionDef{
-				Name:        reg.Name,
-				Description: reg.Description,
-				Parameters:  reg.Parameters,
-			},
-		})
-	}
-	return tools
-}
-
-func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, tools []Tool, isFirstTurn bool) (Message, error) {
+func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, isFirstTurn bool) (Message, error) {
 	reqBody := ChatRequest{
 		Model:           cfg.Model,
 		Messages:        messages,
-		Tools:           tools,
+		Tools:           toolSchemas,
 		Stream:          true,
 		ReasoningEffort: cfg.ReasoningEffort,
 	}
@@ -1157,6 +1155,7 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 		return Message{}, fmt.Errorf("failed to create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
 	fmt.Print("\033[33mWaiting...\033[0m ")
@@ -1179,20 +1178,47 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 	maxIdx := -1
 
 	// Track the current output mode to add blank lines on transitions.
-	// 0: none, 1: reasoning, 2: content
-	lastMode := 0
-	startedPrinting := false
+	// lastMode == modeNone doubles as "nothing printed yet this turn", so a
+	// separate started-printing flag is redundant.
+	lastMode := modeNone
 	var lastChar rune
 
-	printTransitionNewline := func() {
-		if lastChar == '\n' {
-			fmt.Print("\n")
-		} else {
-			fmt.Print("\n\n")
+	// printDelta renders one streaming delta. modeReasoning prints dimmed,
+	// modeContent prints plain. The leading newline (first output of a
+	// non-first turn) and the mode-switch separator are mutually exclusive,
+	// since both are keyed off lastMode.
+	printDelta := func(text string, color string, mode printMode) {
+		if text == "" {
+			return
 		}
+		if lastMode == modeNone {
+			if !isFirstTurn {
+				fmt.Print("\n")
+			}
+		} else if lastMode != mode {
+			if lastChar == '\n' {
+				fmt.Print("\n")
+			} else {
+				fmt.Print("\n\n")
+			}
+		}
+		sanitized := sanitizeForTerminal(text)
+		if sanitized != "" {
+			lastChar = rune(sanitized[len(sanitized)-1])
+		}
+		if color != "" {
+			sanitized = color + sanitized + "\033[0m"
+		}
+		fmt.Print(sanitized)
+		lastMode = mode
 	}
 
+	// SSE data lines can far exceed bufio.Scanner's 64KB default token: one
+	// chunk carrying a large tool-call arguments delta (a write_file of a big
+	// file) would otherwise end the turn with ErrTooLong after output has
+	// already been printed.
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4<<20)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -1216,63 +1242,38 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 			delta := chunk.Choices[0].Delta
 
 			// Handle Reasoning
-			if delta.Reasoning != "" {
-				if !isFirstTurn && !startedPrinting {
-					fmt.Print("\n")
-					startedPrinting = true
-				}
-				if lastMode == 2 {
-					printTransitionNewline()
-				}
-				sanitized := sanitizeForTerminal(delta.Reasoning)
-				fmt.Print("\033[38;5;244m" + sanitized + "\033[0m")
-				assistantMsg.Reasoning += delta.Reasoning
-				lastMode = 1
-				if len(sanitized) > 0 {
-					lastChar = rune(sanitized[len(sanitized)-1])
-				}
-			}
+			printDelta(delta.Reasoning, "\033[38;5;244m", modeReasoning)
+			assistantMsg.Reasoning += delta.Reasoning
 
 			// Handle ReasoningContent
-			if delta.ReasoningContent != "" {
-				if !isFirstTurn && !startedPrinting {
-					fmt.Print("\n")
-					startedPrinting = true
-				}
-				if lastMode == 2 {
-					printTransitionNewline()
-				}
-				sanitized := sanitizeForTerminal(delta.ReasoningContent)
-				fmt.Print("\033[38;5;244m" + sanitized + "\033[0m")
-				assistantMsg.ReasoningContent += delta.ReasoningContent
-				lastMode = 1
-				if len(sanitized) > 0 {
-					lastChar = rune(sanitized[len(sanitized)-1])
-				}
-			}
+			printDelta(delta.ReasoningContent, "\033[38;5;244m", modeReasoning)
+			assistantMsg.ReasoningContent += delta.ReasoningContent
 
-			if delta.Content != "" {
-				if !isFirstTurn && !startedPrinting {
-					fmt.Print("\n")
-					startedPrinting = true
-				}
-				if lastMode == 1 {
-					printTransitionNewline()
-				}
-				sanitized := sanitizeForTerminal(delta.Content)
-				fmt.Print(sanitized)
-				assistantMsg.Content += delta.Content
-				lastMode = 2
-				if len(sanitized) > 0 {
-					lastChar = rune(sanitized[len(sanitized)-1])
-				}
-			}
+			// Handle Content
+			printDelta(delta.Content, "", modeContent)
+			assistantMsg.Content += delta.Content
 
 			for _, tc := range delta.ToolCalls {
-				if tc.Index == nil {
-					continue
+				// Decide which call this delta belongs to. Providers that number
+				// their calls use index; providers that omit index entirely were
+				// previously dropped. A delta continues the call at its slot
+				// unless it brings a different ID — a continuation never re-sends
+				// one — in which case the provider is starting a new call (some
+				// reuse a single index for sequential calls) and it gets the next
+				// free slot.
+				idx := maxIdx + 1
+				if tc.Index != nil {
+					idx = *tc.Index
 				}
-				idx := *tc.Index
+				if prev, taken := toolCallsMap[idx]; taken {
+					if tc.ID != "" && prev.ID != "" && prev.ID != tc.ID {
+						idx = maxIdx + 1
+					}
+				} else if tc.Index == nil && maxIdx >= 0 {
+					if prev, open := toolCallsMap[maxIdx]; open && (tc.ID == "" || prev.ID == "") {
+						idx = maxIdx
+					}
+				}
 				if idx > maxIdx {
 					maxIdx = idx
 				}
@@ -1298,6 +1299,10 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 		assistantMsg.ToolCalls = make([]ToolCall, 0, maxIdx+1)
 		for i := 0; i <= maxIdx; i++ {
 			if tc, ok := toolCallsMap[i]; ok {
+				// index is a stream-assembly artifact, not part of the shape of
+				// an assistant message; leaving it in re-sends it on every later
+				// turn, which strict endpoints reject.
+				tc.Index = nil
 				assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, *tc)
 			}
 		}
@@ -1308,6 +1313,18 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 	}
 
 	return assistantMsg, nil
+}
+
+// trailingText returns the last text an assistant turn produced, preferring
+// visible content over either reasoning field, and reports whether the turn
+// produced any text at all.
+func trailingText(m Message) (string, bool) {
+	for _, text := range []string{m.Content, m.ReasoningContent, m.Reasoning} {
+		if text != "" {
+			return text, true
+		}
+	}
+	return "", false
 }
 
 func printUsage() {
@@ -1396,7 +1413,6 @@ func main() {
 		fmt.Printf("\033[1mEffort:\033[0m %s\n", cfg.ReasoningEffort)
 	}
 
-	tools := getTools()
 	var messages []Message
 	messages = append(messages, Message{
 		Role: "system",
@@ -1476,7 +1492,7 @@ func main() {
 		}()
 
 		for i := 0; ; i++ {
-			assistantMsg, err := callEndpointStreaming(turnCtx, cfg, messages, tools, i == 0)
+			assistantMsg, err := callEndpointStreaming(turnCtx, cfg, messages, i == 0)
 
 			if err != nil {
 				if turnCtx.Err() != nil {
@@ -1487,21 +1503,17 @@ func main() {
 				break
 			}
 
+			// The assistant message is appended verbatim: its Reasoning and
+			// ReasoningContent travel with this turn's tool calls and are sent
+			// back to the server exactly as the stream provided them.
 			messages = append(messages, assistantMsg)
 
-			if assistantMsg.Content != "" || assistantMsg.Reasoning != "" || assistantMsg.ReasoningContent != "" {
-				lastText := assistantMsg.Content
-				if lastText == "" {
-					lastText = assistantMsg.ReasoningContent
-				}
-				if lastText == "" {
-					lastText = assistantMsg.Reasoning
-				}
-
-				if len(lastText) > 0 && lastText[len(lastText)-1] != '\n' {
-					fmt.Print("\n")
-				}
+			// Close the printed turn on a newline, whichever stream produced
+			// the text that ended up on screen.
+			if text, ok := trailingText(assistantMsg); ok && !strings.HasSuffix(text, "\n") {
+				fmt.Print("\n")
 			}
+
 			if len(assistantMsg.ToolCalls) == 0 {
 				break
 			}
