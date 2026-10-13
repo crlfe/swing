@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"unicode"
@@ -357,64 +358,193 @@ func getRangeString(startLine, endLine int) string {
 	return fmt.Sprintf(" (lines %d-%d)", startLine, endLine)
 }
 
-func splitFileOnString(path string, search string, startLine, endLine int) (before, match, after string, err error) {
+// --- Text File Line Access Helper ---
+
+// textFile provides line-based access to a text file using only a byte-offset
+// table, so callers can move between 1-based line numbers and byte positions
+// in the raw content without materializing a separate slice of line strings.
+//
+// Line splitting follows the convention used throughout this file: lines are
+// delimited by a single '\n'. A file ending in a newline therefore yields a
+// final empty line, and total() includes it. This matches strings.Split(content,
+// "\n") and preserves the line-counting behavior of read_file / read_block /
+// write_block.
+//
+// Note: '\r\n' (Windows) line endings are intentionally treated as part of the
+// line text rather than as a line terminator; only '\n' splits lines.
+type textFile struct {
+	content string
+	// offsets[i] is the byte index in content where line i (0-based) begins.
+	// len(offsets) is the number of lines.
+	offsets []int
+}
+
+// readTextFile reads a whole file (guarded by maxFileSize) and builds the
+// offset table.
+func readTextFile(path string) (*textFile, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", "", "", err
+		return nil, err
 	}
 	if info.Size() > maxFileSize {
-		return "", "", "", fmt.Errorf("file is too large to process (%d bytes, max %d)", info.Size(), maxFileSize)
+		return nil, fmt.Errorf("file is too large to process (%d bytes, max %d)", info.Size(), maxFileSize)
 	}
-
-	content, err := os.ReadFile(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", "", err
+		return nil, err
 	}
-	sContent := string(content)
+	return newTextFile(string(b)), nil
+}
 
-	// If lines are specified, we need to find the byte offsets of those lines
-	var searchStart, searchEnd int
-	if startLine > 0 || endLine > 0 {
-		lines := strings.Split(sContent, "\n")
-		if startLine > len(lines) {
-			return "", "", "", fmt.Errorf("start_line %d is beyond file length %d", startLine, len(lines))
+// newTextFile builds the offset table from raw content. The offsets produced
+// are equivalent to the boundaries implied by strings.Split(content, "\n").
+func newTextFile(content string) *textFile {
+	var offsets []int
+	off := 0
+	for {
+		offsets = append(offsets, off)
+		idx := strings.IndexByte(content[off:], '\n')
+		if idx < 0 {
+			break
 		}
-		if endLine > 0 && endLine < startLine {
-			return "", "", "", fmt.Errorf("end_line cannot be less than start_line")
-		}
+		off += idx + 1 // skip past the newline to the start of the next line
+	}
+	return &textFile{content: content, offsets: offsets}
+}
 
-		// Calculate searchStart byte offset
-		if startLine > 1 {
-			for i := 0; i < startLine-1; i++ {
-				searchStart += len(lines[i]) + 1 // +1 for the \n
-			}
-		}
+// total returns the number of lines (matching the existing len(lines) count).
+func (t *textFile) total() int { return len(t.offsets) }
 
-		// Calculate searchEnd byte offset
-		if endLine > 0 && endLine < len(lines) {
-			for i := 0; i < endLine; i++ {
-				searchEnd += len(lines[i]) + 1
-			}
+// line returns the text of the 1-based line n, with its trailing newline
+// stripped. Out-of-range n returns "". slice(n, n) already handles the last
+// line, since endOffset returns len(content) there and there is no newline to
+// strip.
+func (t *textFile) line(n int) string {
+	if n < 1 || n > t.total() {
+		return ""
+	}
+	return strings.TrimSuffix(t.slice(n, n), "\n")
+}
+
+// normalizeRange turns the tool-facing (start, end) pair — where 0 means
+// "unset" — into concrete 1-based inclusive bounds clamped to the file.
+func (t *textFile) normalizeRange(start, end int) (int, int, error) {
+	if start < 0 || end < 0 {
+		return 0, 0, fmt.Errorf("start_line and end_line must be positive")
+	}
+	if start == 0 {
+		start = 1
+	}
+	if end == 0 || end > t.total() {
+		end = t.total()
+	}
+	if start > t.total() {
+		return 0, 0, fmt.Errorf("start_line %d is beyond file length %d", start, t.total())
+	}
+	if end < start {
+		return 0, 0, fmt.Errorf("end_line cannot be less than start_line")
+	}
+	return start, end, nil
+}
+
+// slice returns the text of lines [start..end] (1-based, inclusive) as a
+// single subslice of the raw content. Because endOffset(end) sits just past
+// line end's newline, this reproduces the same text strings.Join would produce
+// without re-inserting newlines.
+func (t *textFile) slice(start, end int) string {
+	return t.content[t.startOffset(start):t.endOffset(end)]
+}
+
+// startOffset returns the byte index where 1-based line n begins.
+func (t *textFile) startOffset(n int) int {
+	if n <= 1 {
+		return 0
+	}
+	return t.offsets[n-1]
+}
+
+// endOffset returns the byte index just past the end of 1-based line n
+// (i.e. the start of line n+1, or len(content) if n is the last line).
+func (t *textFile) endOffset(n int) int {
+	if n >= t.total() {
+		return len(t.content)
+	}
+	return t.offsets[n]
+}
+
+// lineAt returns the 1-based line number that contains the byte offset off.
+// offsets is sorted, so this is a binary search for the last line whose start
+// offset is <= off. The newline that terminates a line belongs to that line,
+// so an offset landing on a newline resolves to the line it ends.
+func (t *textFile) lineAt(off int) int {
+	idx, found := slices.BinarySearch(t.offsets, off)
+	if !found {
+		idx--
+	}
+	return idx + 1
+}
+
+// fitRange returns the largest end line e within [start..end] such that the
+// text of lines [start..e] fits within maxBytes. endOffset is monotonic in n,
+// so this is a binary search. It returns start when line start alone exceeds
+// maxBytes; callers must handle that case by cutting mid-line.
+func (t *textFile) fitRange(start, end, maxBytes int) int {
+	lo, hi := start, end
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if t.endOffset(mid)-t.startOffset(start) <= maxBytes {
+			lo = mid
 		} else {
-			searchEnd = len(sContent)
+			hi = mid - 1
 		}
-	} else {
-		searchStart = 0
-		searchEnd = len(sContent)
 	}
+	return lo
+}
+
+// matchLinesFor locates search within lines [startLine..endLine] and returns
+// the parsed file together with the 1-based, inclusive range of COMPLETE lines
+// that the match spans. Callers use the returned textFile and line range to
+// slice the file on line boundaries (via startOffset/endOffset), so both reads
+// and edits always operate on whole lines and the file is parsed exactly once.
+func matchLinesFor(path string, search string, startLine, endLine int) (tf *textFile, matchStart, matchEnd int, err error) {
+	// An empty search would match at offset 0 everywhere, and the duplicate
+	// check below would slice past the end of an empty search area. Neither
+	// caller has a meaningful use for it.
+	if search == "" {
+		return nil, 0, 0, fmt.Errorf("the search string may not be empty")
+	}
+
+	tf, err = readTextFile(path)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	sContent := tf.content
+
+	// Turn the tool-facing (start, end) pair into concrete 1-based bounds and
+	// convert them to byte offsets delimiting the search area.
+	start, end, err := tf.normalizeRange(startLine, endLine)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	searchStart := tf.startOffset(start)
+	searchEnd := tf.endOffset(end)
 
 	searchArea := sContent[searchStart:searchEnd]
 	idx := strings.Index(searchArea, search)
 	if idx == -1 {
-		return "", "", "", fmt.Errorf("search string not found in file (within lines %d-%d)", startLine, endLine)
+		return nil, 0, 0, fmt.Errorf("search string not found in file (within lines %d-%d)", start, end)
 	}
 
 	if strings.Contains(searchArea[idx+1:], search) {
-		return "", "", "", fmt.Errorf("search string found multiple times in search area")
+		return nil, 0, 0, fmt.Errorf("search string found multiple times in search area")
 	}
 
+	// Expand the raw byte match to the complete lines it touches: the line
+	// holding its first byte through the line holding its last byte.
 	absIdx := searchStart + idx
-	return sContent[:absIdx], sContent[absIdx : absIdx+len(search)], sContent[absIdx+len(search):], nil
+	matchStart = tf.lineAt(absIdx)
+	matchEnd = tf.lineAt(absIdx + len(search) - 1)
+	return tf, matchStart, matchEnd, nil
 }
 
 func resolvePath(path string) (string, error) {
@@ -522,16 +652,18 @@ func handleReadFile(argsJSON string) (string, error) {
 	return string(b), nil
 }
 
+// indentOf returns the width of a line's leading run of spaces and tabs.
+func indentOf(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " \t"))
+}
+
 func handleReadBlock(argsJSON string) (string, error) {
 	var args ReadBlockArgs
 	if err := unmarshalStrict([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	firstLineOfQuery := ""
-	if lines := strings.Split(args.Query, "\n"); len(lines) > 0 {
-		firstLineOfQuery = lines[0]
-	}
+	firstLineOfQuery := newTextFile(args.Query).line(1)
 
 	rangeStr := getRangeString(args.StartLine, args.EndLine)
 	logToolCall("read_block %q find %q%s", args.Path, firstLineOfQuery, rangeStr)
@@ -540,41 +672,31 @@ func handleReadBlock(argsJSON string) (string, error) {
 		return "", err
 	}
 
-	_, match, after, err := splitFileOnString(safePath, args.Query, args.StartLine, args.EndLine)
+	tf, matchStart, _, err := matchLinesFor(safePath, args.Query, args.StartLine, args.EndLine)
 	if err != nil {
 		return "", err
 	}
 
-	// We combine the match and the subsequent content to process as a stream of lines
-	content := match + after
-	scanner := bufio.NewScanner(strings.NewReader(content))
+	// Walk the file line by line from the matched line using the offset table
+	// built once by matchLinesFor. Every line considered is a complete line,
+	// so the block is whole lines and startIndent is measured from the start of
+	// the matched line rather than from wherever the match happened to begin.
+	// A blank line never ends a block: it is kept, and the scan continues to
+	// the next non-blank line.
 	var block []string
 	var startIndent int
-	firstLine := true
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		if firstLine {
+	for n := matchStart; n <= tf.total(); n++ {
+		line := tf.line(n)
+		if n == matchStart {
 			block = append(block, line)
-			startIndent = len(line) - len(strings.TrimLeft(line, " \t"))
-			firstLine = false
+			startIndent = indentOf(line)
 			continue
 		}
-
-		if strings.TrimSpace(line) == "" {
-			block = append(block, line)
-			continue
-		}
-
-		indent := len(line) - len(strings.TrimLeft(line, " \t"))
-		if indent <= startIndent {
+		if strings.TrimSpace(line) != "" && indentOf(line) <= startIndent {
 			break
 		}
 		block = append(block, line)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return "", err
 	}
 
 	return strings.Join(block, "\n"), nil
@@ -586,10 +708,7 @@ func handleWriteBlock(argsJSON string) (string, error) {
 		return "", fmt.Errorf("Argument error: %v", err)
 	}
 
-	firstLine := ""
-	if lines := strings.Split(args.OldBlock, "\n"); len(lines) > 0 {
-		firstLine = lines[0]
-	}
+	firstLine := newTextFile(args.OldBlock).line(1)
 
 	rangeStr := getRangeString(args.StartLine, args.EndLine)
 	logToolCall("write_block %q replace %q%s", args.Path, firstLine, rangeStr)
@@ -599,12 +718,21 @@ func handleWriteBlock(argsJSON string) (string, error) {
 		return "", err
 	}
 
-	before, _, after, err := splitFileOnString(safePath, args.OldBlock, args.StartLine, args.EndLine)
+	tf, matchStart, matchEnd, err := matchLinesFor(safePath, args.OldBlock, args.StartLine, args.EndLine)
 	if err != nil {
 		return "", err
 	}
 
-	newContent := before + args.NewBlock + after
+	// Replace the COMPLETE lines the match spans. startOffset(matchStart) sits
+	// just before the first matched line and endOffset(matchEnd) just after the
+	// last, so before/after land on line boundaries and the edit never splits a
+	// line. If the replaced region was newline-terminated, make sure the
+	// replacement is too, so the following line stays separated.
+	newBlock := args.NewBlock
+	if strings.HasSuffix(tf.slice(matchStart, matchEnd), "\n") && !strings.HasSuffix(newBlock, "\n") {
+		newBlock += "\n"
+	}
+	newContent := tf.content[:tf.startOffset(matchStart)] + newBlock + tf.content[tf.endOffset(matchEnd):]
 	err = os.WriteFile(safePath, []byte(newContent), 0644)
 	if err != nil {
 		return "", err
