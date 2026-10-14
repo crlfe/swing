@@ -1,0 +1,134 @@
+# Swing control-channel message set (spike draft).
+#
+# Companion to design.md §7 (wire protocol) and §6 (tool protocol). This file is
+# the single definition shared by swing-server, swing-guest, and (later) the
+# `swing trace` pretty-printer. It is documentation for now; the Rust source of
+# truth is crates/swing-proto/src/msg.rs. Keeping the two in sync is tracked by
+# OQ-3 / T3 in todo.md.
+#
+# Frame layout (design.md §7), big-endian, fixed header = 29 bytes:
+#   0  magic   4  "SWNG"
+#   4  version 1  currently 1
+#   5  kind    1  0 = header only, 1 = header + body
+#   6  stream  1  0 = control, 1 = exec, 2 = bulk, 3 = log
+#   7  id      4  attempt / container id
+#   11 call     4  call id, 0 if none
+#   15 seq      8  monotonic per (stream, id)
+#   23 hlen     2  header length (JSON)
+#   25 blen     4  body length (opaque bytes)
+#   29 header   hlen  JSON  (serde_json; the `type` tag selects the message)
+#   --  body    blen  opaque bytes (binary-safe; never escaped strings)
+#
+# Max frame size is a protocol constant: 4096 bytes (D-42, provisional).
+# Large payloads are chunked across frames on the bulk stream (not yet wired).
+
+[protocol]
+magic = "SWNG"
+version = 1
+max_frame_size = 4096
+byte_order = "big-endian"
+
+# ---- handshake: guest -> server ----
+[[message]]
+name = "hello"
+direction = "guest_to_server"
+stream = "control"
+fields = ["build_id"]
+notes = "First frame after connect. build_id pairs with the server build so a mismatch is a clear error, not garbage."
+
+[[message]]
+name = "ready"
+direction = "guest_to_server"
+stream = "control"
+fields = []
+
+# ---- container lifecycle (stubs; not exercised in the spike) ----
+[[message]]
+name = "container_create"
+direction = "server_to_guest"
+stream = "control"
+fields = ["id"]
+
+[[message]]
+name = "container_destroy"
+direction = "server_to_guest"
+stream = "control"
+fields = ["id"]
+
+[[message]]
+name = "container_ready"
+direction = "guest_to_server"
+stream = "control"
+fields = ["id"]
+
+[[message]]
+name = "shutdown"
+direction = "server_to_guest"
+stream = "control"
+fields = []
+
+# ---- exec: server -> guest ----
+[[message]]
+name = "exec_start"
+direction = "server_to_guest"
+stream = "exec"
+fields = ["command", "cwd?", "timeout_ms?"]
+notes = "command is a shell string run via `sh -c` (D-43)."
+
+[[message]]
+name = "exec_cancel"
+direction = "server_to_guest"
+stream = "exec"
+fields = []
+notes = "TODO: cancellation is in the protocol but not implemented in the spike."
+
+# ---- exec: guest -> server ----
+[[message]]
+name = "exec_output"
+direction = "guest_to_server"
+stream = "exec"
+fields = ["stderr"]
+body = "stdout or stderr chunk (binary-safe)"
+
+[[message]]
+name = "exec_exit"
+direction = "guest_to_server"
+stream = "exec"
+fields = ["code?", "signal?", "runtime_ms"]
+notes = "timeout / signal / non-zero exit must stay distinguishable."
+
+# ---- fs: server -> guest ----
+[[message]]
+name = "fs_read"
+direction = "server_to_guest"
+stream = "control"
+fields = ["path", "offset?", "limit?"]
+
+[[message]]
+name = "fs_write"
+direction = "server_to_guest"
+stream = "control"
+fields = ["path"]
+body = "file contents (binary-safe)"
+
+[[message]]
+name = "fs_list"
+direction = "server_to_guest"
+stream = "control"
+fields = ["path"]
+
+# ---- fs: guest -> server ----
+[[message]]
+name = "fs_result"
+direction = "guest_to_server"
+stream = "control"
+fields = ["ok", "error?", "entries", "total?", "truncated"]
+body = "read bytes (for fs_read); empty otherwise"
+notes = "error is a model-actionable code (no_such_file, bad_path, payload_too_large), not a raw errno."
+
+# ---- generic ----
+[[message]]
+name = "error"
+direction = "guest_to_server"
+stream = "control"
+fields = ["code", "message"]

@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/swing-proto",
+    "crates/swing-server",
+    "crates/swing-guest",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+# Spike build profile. Production profiles (release, LTO, strip) come later.
+[profile.dev]
+opt-level = 0
