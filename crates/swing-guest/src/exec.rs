@@ -1,16 +1,15 @@
 //! exec primitives (design.md §6).
 //!
-//! Spike: run `sh -c <command>` to completion, stream stdout/stderr as
-//! `exec_output` frames (chunked to fit MAX_FRAME_SIZE), then one `exec_exit`.
+//! Run `sh -c <command>` to completion, stream stdout/stderr as `exec_output`
+//! frames (chunked to fit MAX_FRAME_SIZE), then one `exec_exit`. Runs in the
+//! container child's cwd (the workspace).
 //!
 //! TODO (deferred, tracked in todo.md):
 //! - Incremental streaming while the process runs (currently reads to EOF).
-//! - `exec_cancel` (cancellation) and `timeout_ms` enforcement.
+//! - `exec_cancel` (cancellation) and `timeout_ms` enforcement (T3).
 //! - Distinguish signal vs. non-zero exit on non-unix platforms.
-//! - Per-container cwd / sandbox (T4 — currently runs in the coordinator's cwd).
 
-use std::io::Read;
-use std::net::TcpStream;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
@@ -22,8 +21,8 @@ use swing_proto::{Conn, Msg, Stream, MAX_FRAME_SIZE};
 /// of slack is generous.
 const MAX_BODY: usize = MAX_FRAME_SIZE - 256;
 
-pub fn handle_exec(
-    conn: &mut Conn<TcpStream>,
+pub fn handle_exec<S: Read + Write>(
+    conn: &mut Conn<S>,
     id: u32,
     call: u32,
     command: &str,
@@ -76,8 +75,8 @@ pub fn handle_exec(
     Ok(())
 }
 
-fn send_chunks(
-    conn: &mut Conn<TcpStream>,
+fn send_chunks<S: Read + Write>(
+    conn: &mut Conn<S>,
     id: u32,
     call: u32,
     stderr: bool,

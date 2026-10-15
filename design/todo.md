@@ -7,9 +7,11 @@ where the first product-quality version lands is deliberately left open.
 
 Resolved since the last version, so they are no longer listed here: **container
 lifetime tied to ticket status — created on start, destroyed only on delete, parking
-keeps the container (D-35, revised)**, control-channel transport (D-19, D-27), network
-backend rejection (D-28 … D-31), image size budget (D-36), **egress mechanism switched
-from SOCKS5 to transparent interception (D-32, D-38 … D-40)**.
+keeps the container (D-35, revised)**, **control-channel transport switched from loopback
+TCP to a private local channel — fd-passing on Unix, DACL-secured named pipe on Windows
+(D-19, D-27 revised; D-44, D-45)**, network backend rejection (D-28 … D-31), image size
+budget (D-36), **egress mechanism switched from SOCKS5 to transparent interception
+(D-32, D-38 … D-40)**.
 
 ---
 
@@ -25,10 +27,11 @@ API, no daemon, and no token auth in this step.
   Use **complete-response tool calls, not streaming**. The provider is a swappable
   server-side detail. Remaining open: tool-schema feature vs prompt-based invocation,
   retry/error taxonomy.
-- **Frame format + one loopback socket + the two-process split (T3).** **Decided (D-42):
+- **Frame format + one local channel + the two-process split (T3).** **Decided (D-42):
   serde (`serde_json`) header, max frame size 4 KiB** (provisional). Implement the §7
-  header over a single loopback TCP socket with the `stream` field multiplexing
-  control/exec/log. Still open (non-blocking): `schema.toml`, port count, backpressure.
+  header over a single `socketpair()` (the Unix form of the production transport) with the
+  `stream` field multiplexing control/exec/log. Still open (non-blocking): `schema.toml`,
+  channel count, backpressure.
 - **Tool schema for the four tools (T1).** **Decided (D-43): `shell` takes a `command`
   string** (run via `sh -c`). The §6 draft is enough to start; still pin a truncation
   marker and model-actionable error shapes (`no_such_file`, not a raw errno).
@@ -39,15 +42,22 @@ API, no daemon, and no token auth in this step.
 **De-risked ordering:**
 1. **Day 0 (throwaway):** in-process chat loop + real provider + the four tools on a
    plain work directory. Answers the highest-value unknown — does the tool surface work
-   against a real model — in an afternoon.
-2. **Split out `swing-guest`** behind the §7 frame format over one loopback socket;
+   against a real model — in an afternoon. **Done.** Happy path confirmed against a real
+   model (all four tools, sensible chaining, clean terminal condition). Failure paths
+   (truncation, error recovery, workspace-boundary) still untested — see T1.
+2. **Split out `swing-guest`** behind the §7 frame format over one `socketpair()`;
    tools become remote exec/fs. Keep the framed server↔guest boundary from day 1 of the
    *real* spike — collapsing it into one process makes the later virtio-serial swap a
-   rewrite, not a config change.
+   rewrite, not a config change. **Done.** `swing-guest` is now a coordinator that forks
+   `swing-guest container` children (via `Command` + a `socketpair` as the child's
+   stdin/stdout) and routes exec/fs frames by container id.
 3. **Add `unshare`** around the work directory (T4). Defer it: run exec/fs against a
    plain directory first. This also sidesteps whether unprivileged user namespaces work
    on the dev box, and the fact that distinct-uid allocation is not possible
-   unprivileged.
+   unprivileged. **In progress.** Unprivileged user namespaces confirmed on the dev box.
+   A `unshare`/mount/`pivot_root`/cap-drop recipe is implemented in the container child
+   (`swing-guest/src/sandbox.rs`), **opt-in** via `SWING_SANDBOX=1` and **not yet
+   verified on-box** — see T4 for what remains.
 
 **Explicitly deferred out of this spike** (do not design them now): webapp / HTTP API /
 token auth (OQ-13, T23); daemon, pidfile, login-start, crash semantics (OQ-15, T8b);
@@ -94,6 +104,18 @@ Decide:
 Why it matters: model competence against your tool surface is the whole product, and
 it is the thing you most do not want to discover after building a VM.
 
+**Spike status.** Happy path confirmed against a real model: valid JSON args for all
+four tools, idiomatic `sh -c` command strings (`wc -l < f`, `mkdir d`), sensible tool
+chaining, and a clean terminal condition. D-43 confirmed — the model reaches for
+`shell` for filesystem ops the fs tools don't cover. **Open finding — tool error
+recovery:** `read_file` feeds guest errors back to the model as actionable text
+(`[error: no_such_file]`), but `shell`/`write_file`/`list_dir` propagate them with `?`,
+which aborts the whole attempt (the model never sees the error and cannot recover).
+Truncation and error-recovery paths are still untested. Captured in
+`swing-server/src/tools.rs` (`TODO (T1, tool error recovery)`); fix so every tool-level
+failure returns actionable text and reserves attempt-level failure for transport/guest
+death, then re-run the adversarial prompts.
+
 ### T2. Context assembly  *(OQ-2)*
 Decide a naive rule for A1, even though real management is B3:
 - Full transcript every turn, or last N entries?
@@ -109,17 +131,20 @@ Decide:
 - Backpressure: what happens when the channel fills while an `exec` is streaming.
 - Define the message set in `schema.toml` so both sides and `swing trace` share one
   definition.
-- **How many loopback listeners and ports.** D-27 fixes the transport as loopback TCP
-  everywhere; the open question is whether control, exec, bulk, and (later) egress get
-  separate sockets/ports or share one with a `stream` field. Measure in B1 spike 3, but
-  the `stream` field must be right now.
-- Handshake token format and rotation, given that the loopback socket is now the only
-  capability boundary.
+- **How many channels.** D-27 (revised) fixes the transport as a private local channel —
+  an inherited fd (Unix) or a named pipe (Windows) — not a loopback port. The open question
+  is whether control, exec, bulk, and (later) egress get separate fds/pipes or share one
+  with a `stream` field. Measure in B1 spike 3, but the `stream` field must be right now.
+- **Handshake token is no longer the QEMU-channel capability boundary.** The fd / pipe
+  handle is (D-44, D-45). A token story is still needed for the CLI↔server / HTTP API
+  surface (OQ-13, T23); a `hello`/build-id handshake still exists to catch version
+  mismatches, but it is not an auth mechanism for the QEMU channel.
 
 **Track A discipline:** the transport is a byte stream and only framed messages cross
-it. Loopback TCP between `swing-server` and `swing-guest`, same as production. No fd
-inheritance, no exit codes, no signals across the boundary. If we hold this, swapping
-the loopback socket for a virtio-serial chardev is a configuration change.
+it. A `socketpair()` between `swing-server` and `swing-guest`, the Unix form of production.
+No reliance on fd inheritance beyond the connected stream itself, no exit codes, no signals
+across the boundary. If we hold this, swapping the socketpair for a virtio-serial chardev is
+a configuration change.
 
 ### T4. Container setup, minimal  *(OQ-7)*
 Decide for A1:
@@ -132,6 +157,30 @@ Decide for A1:
   Track B. Proposal: do it in A1 — fault isolation is cheap and we want the code path
   exercised early. Note this code may be replaced by `systemd-run --scope` in the guest
   (D-36), so keep it isolated in one module.
+
+**Spike status (implemented, opt-in, unverified).** The coordinator forks
+`swing-guest container` children; the child runs the recipe in
+`swing-guest/src/sandbox.rs` when launched with `--sandbox` (coordinator flag
+`SWING_SANDBOX=1`). Implemented: `unshare` of user+mount+pid+net+ipc+uts;
+uid/gid mapping (`deny` setgroups, map container root → caller uid); private
+mounts; a tmpfs new root with a read-only toolchain bind set
+(`SWING_SANDBOX_BINDS`, default `/bin:/usr:/lib:/lib64:/etc`), a read-write
+`/work` bind, `proc`, tmpfs `/tmp`, and a minimal `/dev` (null/zero/urandom/tty);
+`pivot_root`; `PR_SET_NO_NEW_PRIVS` + capability bounding-set drop. Unprivileged
+user namespaces confirmed on the dev box.
+
+**Still open for T4 (needs on-box iteration):**
+- Verify the recipe actually runs and contains (T14 canary test) — currently
+  unverified; left opt-in so the working spike is unaffected.
+- Clear **effective/permitted** capabilities via `capset`; bounding-set drop alone
+  is not sufficient.
+- The read-only bind set is a host-dependent stopgap — the real toolchain supply is
+  T15/OQ-4.
+- cgroup `memory.max` / `pids.max` (§11) not yet wired.
+- Per-container distinct uid inside the userns (host-side distinct uid is a Track B
+  / egress concern).
+- `pivot_root` vs tmpfs-root-with-binds is currently `pivot_root`; revisit if it
+  fights anything.
 
 ### T5. Terminal conditions and iteration policy  *(OQ-5)*
 Decide:
@@ -234,6 +283,19 @@ Decide:
   flake's `nixpkgs.hostPlatform`, so it must be settled before `base.img` is built.
 - Nested-virtualization policy: hard error with a clear message (proposal).
 
+### T13a. Control-channel transport  *(OQ-22)*
+The revised transport (D-19, D-27, D-44, D-45) is asserted, not proven. Spike before B2:
+- **Unix:** attach a server-created `socketpair` descriptor to QEMU via
+  `-chardev socket,fd=N` on Linux **and** macOS — confirm fd numbering, close-on-exec, and
+  that the descriptor survives the QEMU `exec`.
+- **Windows:** create a named pipe with a DACL admitting only QEMU's restricted token
+  (`CreateRestrictedToken`), and attach it to QEMU as a chardev. Determine exactly what the
+  restricted token must grant (pipe handle, the three disk files) and what it can drop.
+- Confirm the exact QEMU chardev spelling/backend for a Windows named pipe.
+- Confirm QEMU ends up with **no socket capability** (ties to T14's containment check and
+  D-45).
+- Decide one channel vs. two (control + bulk) here, feeding OQ-3.
+
 ### T14. Containment verification method  *(B1 spike 4)*
 Decide what "prove nothing escapes" means concretely: a strace/auditd sweep, a
 read-only host filesystem, a dedicated uid with no readable home directory, a canary
@@ -328,9 +390,11 @@ what the ticket records about which secrets an attempt had access to.
 
 ### T23. Localhost HTTP API and webapp surface  *(OQ-13)*
 Who may connect, token distribution, whether the webapp or the TUI is primary, what
-the API exposes. This is the first host-side listener a browser touches, and with
-D-27 loopback TCP is now the single mechanism everywhere — so the token is the only
-thing distinguishing an authorized client from any other local process.
+the API exposes. This is the first host-side listener a browser touches. After the D-27
+revision the QEMU channel is a private fd/pipe and needs no token, so **loopback TCP now
+applies only to this CLI/HTTP surface** — which makes it the one place where a token is the
+only thing distinguishing an authorized client from any other local process. Consider
+whether the same platform-native local-channel approach should eventually replace it.
 
 ### T24. Mediated egress: verify the mechanism  *(OQ-21)*
 Transparent interception via the TPROXY family is chosen (D-32). **The mechanism is
@@ -459,6 +523,10 @@ compromises the VM image for every user.
 - **QEMU is the security boundary**, so we inherit its device-model CVE history.
   Mitigated by device minimization, no network backend compiled in, and Linux
   `-sandbox on`; not solved.
+- **The control-channel transport is now per-platform and asserted, not proven** (T13a,
+  OQ-22). Two implementations (fd-passing on Unix, named pipe + DACL + restricted token on
+  Windows) replace the single loopback path; the Windows mechanism in particular is
+  unverified. If it fails, loopback TCP for the QEMU channel is the fallback.
 - **`swing-server` is now the most powerful component**: host network, credentials,
   and network tools executed on the model's behalf. See T17 and T24.
 - **`swing-guest` runs as root in the guest** and is trusted by the server. A

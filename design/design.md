@@ -2,9 +2,9 @@
 
 **Swing** (as in "take a swing at it").
 
-Status: draft v5, pre-prototype. Resolved items are in [Decisions](#20-decisions)
-(D-1 … D-40); unresolved items are in [Open Questions](#21-open-questions)
-(OQ-1 … OQ-21) and [`todo.md`](todo.md).
+Status: draft v6, pre-prototype. Resolved items are in [Decisions](#20-decisions)
+(D-1 … D-45); unresolved items are in [Open Questions](#21-open-questions)
+(OQ-1 … OQ-22) and [`todo.md`](todo.md).
 
 ---
 
@@ -79,7 +79,7 @@ HOST                                                   GUEST (the VM)
 │  - owns tickets (host DB)     │   virtio-serial      │                         │
 │  - owns QEMU child            │◄════════════════════►│  - forks container      │
 │  - LLM sessions + provider    │   binary frames      │    children             │
-│  - tool dispatch              │   (loopback TCP)     │  - exec/fs primitives   │
+│  - tool dispatch              │   (fd / pipe)        │  - exec/fs primitives   │
 │  - scheduler                  │                      │  - workspace mgmt       │
 │  - localhost HTTP API+webapp  │                      └───┬─────────┬───────────┘
 │  - network tools (fetch, etc) │                          │ forks   │
@@ -113,7 +113,9 @@ swing status
 ```
 
 `swing-server` is the long-lived supervisor. It owns the QEMU child, the ticket
-database, LLM provider connections, the scheduler, and the loopback control socket.
+database, LLM provider connections, the scheduler, and the control channel to QEMU (an
+inherited fd on Unix, a DACL-secured named pipe on Windows). CLI invocations are thin
+clients of it over a loopback control socket.
 CLI invocations are thin clients of it. This is the `docker` / `wsl` shape and it
 works identically on all three host platforms.
 
@@ -559,6 +561,16 @@ What a container gets:
   keys on (`nft` `meta skuid`, D-40) even before egress ships, so the mechanism is
   exercised early.
 
+**Spike status (Track A).** The coordinator/container split is implemented: the
+coordinator forks `swing-guest container` children (via `Command` + a `socketpair` as
+the child's stdin/stdout) and routes exec/fs frames by container id. The child runs an
+opt-in `unshare` recipe (`unshare` user+mount+pid+net+ipc+uts, uid/gid map, private
+mounts, tmpfs root with a read-only toolchain bind set + read-write `/work` + `proc` +
+tmpfs `/tmp` + minimal `/dev`, `pivot_root`, `PR_SET_NO_NEW_PRIVS` + capability
+bounding-set drop) behind `SWING_SANDBOX=1`. It is **not yet verified on-box**; the
+effective/permitted capability drop (`capset`), cgroups, the real toolchain bind set
+(T15), and a containment canary test (T14) remain open — see `todo.md` T4.
+
 **cgroups.** Not quotas or fairness — fault isolation. One runaway container that
 exhausts guest memory otherwise kills every other attempt in the VM.
 
@@ -590,7 +602,9 @@ Boundaries, outermost first:
    network device — and no network backend compiled into our QEMU build. QEMU runs
    unprivileged, minimal devices, disks mode 0600.
 2. **Guest → host.** Only the control channel. Only framed messages the server
-   explicitly understands. Only on loopback with a handshake token. All transfers are
+   explicitly understands. The channel is a private object held only by the server and the
+   QEMU child — an inherited fd (Unix) or a DACL-secured named pipe (Windows) — so there is
+   no listening socket, no port, and no handshake token to steal. All transfers are
    server-initiated, except through the mediated-egress subsystem, which is
    deny-by-default and fully audited.
 3. **Model → host.** The model can only cause tool calls the server recognizes. It
@@ -640,8 +654,8 @@ qemu-system-x86_64 \
   -drive if=none,id=sys,file=system.qcow2            -device virtio-blk-pci,drive=sys
   -drive if=none,id=scr,file=scratch.qcow2           -device virtio-blk-pci,drive=scr
   -device virtio-serial-pci \
-  -chardev socket,id=ctrl,host=127.0.0.1,port=<ephemeral>,server=off \
-  -chardev socket,id=bulk,host=127.0.0.1,port=<ephemeral>,server=off \
+  -chardev <ctrl-chardev> \
+  -chardev <bulk-chardev> \
   -device virtserialport,chardev=ctrl,name=control0 \
   -device virtserialport,chardev=bulk,name=bulk0 \
   -accel <platform> -cpu <platform>
@@ -650,11 +664,25 @@ qemu-system-x86_64 \
 No network device at all. No USB, no sound, no VGA, no IDE, no PCI hotplug, no
 `-serial`, no `-cdrom`, no `-balloon`.
 
-**The control channel is loopback TCP on every platform.** Consistency is chosen over
-per-platform optimization: no AF_UNIX, no fd-passing chardevs, no named pipes. One
-mechanism, one token-auth story, one implementation of the connect/handshake path.
-`swing-server` owns the listener and QEMU connects out (`server=off`), so QEMU never
-creates a listening socket and there is no firewall prompt on Windows.
+**The control channel is a private local channel, not a network port.** The server creates
+the channel and hands QEMU one end; QEMU never binds a listener and never opens a network
+socket. The transport is platform-native because the two native forms give the same
+capability-boundary property, and both are strictly stronger than a loopback port:
+
+- **Linux / macOS:** a `socketpair()`; one descriptor is passed to QEMU as
+  `-chardev socket,fd=N` (`<ctrl-chardev>` / `<bulk-chardev>` above), the server keeps the
+  peer. No port, no listener.
+- **Windows:** a named pipe whose DACL grants access only to QEMU's restricted token
+  (`CreateRestrictedToken`), handed to QEMU as a named-pipe chardev. The DACL *is* the
+  capability boundary.
+
+This replaces the earlier loopback-TCP-everywhere decision (D-19, D-27, now revised): the
+Windows named-pipe + DACL + restricted-token mechanism is close enough to Unix fd-passing
+that the consistency argument no longer justifies a network port for the QEMU channel. The
+channel object — an fd or a pipe handle — *is* the capability, so the QEMU channel needs no
+handshake token, binds no port, cannot be reached by any other local process, and produces
+no firewall prompt on Windows. The exact chardev spelling per platform is confirmed in the
+T13a spike (OQ-22).
 
 **Build guarantee:** our QEMU build compiles in **no network backend** — no libslirp,
 no `virtio-net`, no `passt`. "The VM has no network device" is then a build-time
@@ -665,9 +693,10 @@ mediated egress ever needs a backend, that guarantee is walked back deliberately
 |---|---|---|---|
 | `-machine q35`, virtio-blk / virtio-serial | ✔ | ✔ | ✔ |
 | `-display none`, `-nodefaults`, `-no-reboot`, `-no-shutdown` | ✔ | ✔ | ✔ |
-| `-chardev socket` on 127.0.0.1 | ✔ | ✔ | ✔ |
-| `-chardev socket` AF_UNIX | ✔ | ✔ | ✘ |
-| `-chardev socket,fd=N` (inherited fd) | ✔ | ✔ | ✘ — not used; loopback everywhere |
+| `-chardev socket,fd=N` (inherited fd) | ✔ — **used** | ✔ — **used** | ✘ — no fd inheritance |
+| `-chardev` named pipe (`pipe`) | ✔ | ✔ | ✔ — **used**, DACL-secured |
+| `-chardev socket` on 127.0.0.1 | ✔ | ✔ | ✔ — **not used** (old transport) |
+| `-chardev socket` AF_UNIX | ✔ | ✔ | ✘ — not used |
 | `-netdev user` (slirp) | ✔ | ✔ | ✔ — **not compiled into our build** |
 | `-netdev passt` | ✔ | ✘ | ✘ — **not used, not portable** |
 | `-netdev dgram` | ✔ | ✔ | ✔ — **not used**, see §10a |
@@ -687,8 +716,10 @@ Notes:
 - On non-`host` CPUs, pin a named model so guest binaries match what `base.img` was
   compiled for. This constrains the flake's `nixpkgs.hostPlatform`.
 - `-sandbox on` is Linux-only; no security property in this design may depend on it.
-  With no network backend compiled in, the sandbox grant QEMU needs is essentially
-  file read/write plus virtio-serial chardev I/O.
+  With no network backend compiled in **and the control channel now an inherited fd rather
+  than a TCP connection**, the sandbox grant QEMU needs is essentially file read/write plus
+  the two channel descriptors — QEMU is granted **no socket capability at all**. On Windows
+  the restricted token is scoped the same way: file access plus the named-pipe handle.
 - QEMU ships in the artifact bundle per platform, never found on `PATH`.
 
 ## 15. Process model and platform integration
@@ -715,11 +746,14 @@ Detaching details:
 - **Job objects:** if the server puts QEMU in a Windows job object (a common cleanup
   idiom), QEMU dies with the server. Decide deliberately.
 - Windows has no SIGHUP and no clean signal; shutdown is a control-channel message.
-- IPC: **loopback TCP everywhere, on every platform, for every channel** — CLI ↔
-  server, server ↔ QEMU chardev, and server ↔ `swing-guest` in the Track A testbed.
-  No AF_UNIX (unsupported by QEMU on Windows, needs recent Win10 in Rust), no
-  fd-passing chardevs (Unix-only), no named pipes. One mechanism, one token-auth
-  story, one connect/handshake implementation.
+- IPC: **two mechanisms, deliberately.** The **server ↔ QEMU** control channel is a private
+  local channel — an inherited fd (`socketpair`, Unix) or a DACL-secured named pipe
+  (Windows) — never a network port. The **CLI ↔ server** channel and the localhost HTTP API
+  stay **loopback TCP** (a host-side listener surface governed by OQ-13, not part of the VM
+  boundary). Track A's server ↔ `swing-guest` link mirrors the Unix fd form (a
+  `socketpair`) so the B2 swap to virtio-serial stays a config change. The QEMU channel
+  needs no handshake token — the fd / pipe handle *is* the capability; the token story now
+  applies only to the CLI/HTTP surface.
 - Login-start registration (systemd user unit / LaunchAgent / Task Scheduler) is
   deferred to B5, but the server's design must tolerate being started by something
   other than the CLI.
@@ -795,11 +829,11 @@ No QEMU, no Nix, no VM. `swing-server` in the foreground → forks `swing-guest`
 directory. Single Rust program.
 
 **The rule that makes it non-throwaway:** the transport is a byte stream and only
-framed messages cross it. Use a **loopback TCP connection between `swing-server` and
-`swing-guest`** — the same mechanism as the real control channel — and never rely on
-fd inheritance, exit codes, signals, or process ownership across the boundary. Hold
-that line and swapping the loopback socket for a virtio-serial chardev is a
-configuration change, not a code change. Use the real binary frame format from day one.
+framed messages cross it. Use a **`socketpair()` between `swing-server` and `swing-guest`**
+— the Unix form of the real control channel — and never rely on fd inheritance beyond the
+connected stream itself, exit codes, signals, or process ownership across the boundary.
+Hold that line and swapping the socketpair for a virtio-serial chardev is a configuration
+change, not a code change. Use the real binary frame format from day one.
 
 Scope: one LLM provider; four tools; tickets as plain JSON files; no DAG, no parking
 (until A2), no webapp, no package installation, no baseline Nix environment. The
@@ -829,7 +863,7 @@ the tool surface works well against real models — is answered here, cheaply.
 | A2 | Parking (container kept alive, waiting for input), human comments, resume reusing the same container. |
 | A3 | Ticket DAG: `open_ticket`, blocking, cycle detection, scheduler slots. |
 | B1 | Track B spikes complete; a bootable `base.img` from the flake, **with systemd**, meeting the boot-time target. |
-| B2 | Swap Track A's loopback socket for virtio-serial and its `unshare` for `base.img` containers. The design is now real. |
+| B2 | Swap Track A's socketpair for virtio-serial (fd-passing on Unix, named pipe on Windows) and its `unshare` for `base.img` containers. The design is now real. |
 | B3 | Transcript/context management: summarization, collapsing, pruning. |
 | B4 | Software supply: resolve OQ-4. Explicit, recorded, verified fetch — **not** a tunnel. |
 | B5 | Webapp + HTTP API; hardening; macOS/Windows; single-artifact packaging. |
@@ -894,7 +928,7 @@ environment: { packages: [] }
 | D-16 | Server owns tickets; guest owns containers. No dual source of truth. |
 | D-17 | Server records only the *name* of a ticket's workspace; it does not back up workspace contents. |
 | D-18 | Host never mounts images; nothing bound or shared host↔guest. |
-| D-19 | Control channel is virtio-serial over a **loopback TCP chardev on every platform**; the server owns the listener. |
+| D-19 | Control channel is virtio-serial over a **private local chardev** — an inherited fd (Unix) or a DACL-secured named pipe (Windows) — created by the server and handed to QEMU; QEMU never listens and never opens a network socket. *(revised)* |
 | D-20 | Environment changes restart the container; running containers are never mutated. |
 | D-21 | Server owns all credentials; nothing model-related enters the VM. |
 | D-22 | Prototype containers use `unshare` directly from `swing-guest`. |
@@ -902,7 +936,7 @@ environment: { packages: [] }
 | D-24 | Prototype is Linux-only; QEMU invocation and abstractions stay portable. |
 | D-25 | cgroup `memory.max` / `pids.max` as fault isolation, not fairness. |
 | D-26 | Two parallel tracks: QEMU-free PoC (A) and buildability spikes (B). |
-| D-27 | **Loopback TCP for every channel on every platform** — CLI↔server, server↔QEMU, and server↔`swing-guest` in Track A. No AF_UNIX, no fd-passing chardevs, no named pipes. |
+| D-27 | **Server↔QEMU is a platform-native local channel** (fd-passing on Unix, named pipe on Windows), not a loopback port. CLI↔server and the HTTP API stay loopback TCP; Track A mirrors the Unix fd form (a `socketpair`). *(revised)* |
 | D-28 | Our QEMU build compiles in **no network backend**: no libslirp, no `virtio-net`, no `passt`. |
 | D-29 | QEMU user networking (slirp) is rejected: stack inside the boundary process, requires socket grants, no filtering, no audit. |
 | D-30 | passt is rejected: its own documentation states it is not portable, and portability is the reason QEMU is in this design. |
@@ -919,6 +953,8 @@ environment: { packages: [] }
 | D-41 | Provider is **OpenAI-compatible Chat Completions**, configured via `OPENAI_BASE_URL` / `OPENAI_MODEL` / `OPENAI_API_KEY`. The provider is a swappable server-side detail. |
 | D-42 | Wire header serialization is **serde** (`serde_json`), not `postcard`. Max frame size is **4 KiB** — a provisional prototype constant; large payloads are chunked across frames on the bulk stream. |
 | D-43 | The `shell` tool takes a **`command` string** (run via `sh -c`), not `argv`, in v1. |
+| D-44 | On Windows the QEMU channel is a **named pipe secured by a DACL** granting access only to QEMU's **restricted token** (`CreateRestrictedToken`); the DACL is the capability boundary, replacing the handshake token. |
+| D-45 | QEMU is granted **no socket capability**: the control channel is an inherited fd or a pipe handle, so the `-sandbox` / restricted-token grant is file I/O plus the channel handles only. Reinforces D-28. |
 
 ## 21. Open questions
 
@@ -1097,3 +1133,20 @@ The mechanism in §10a is asserted, not yet proven. Confirm by spike:
   routing table and firewall config are installed per-netns — and how intercepted bytes
   reach `swing-server` from a netns that has only `lo` — is unresolved and is the central
   thing the spike must answer.
+
+### OQ-22 — Control-channel transport verification
+
+The revised transport (D-19, D-27, D-44, D-45) is asserted, not yet proven. Confirm by
+spike (T13a):
+
+- Does `-chardev socket,fd=N` reliably attach a server-created `socketpair` descriptor on
+  both Linux and macOS, including across the QEMU `exec` boundary (fd numbering,
+  close-on-exec, descriptor survival)?
+- On Windows: can a named pipe be created with a DACL that admits **only** the QEMU child's
+  restricted token, and can QEMU attach it as a chardev? What exactly must
+  `CreateRestrictedToken` grant (the pipe handle, the three disk files) and what can it
+  drop?
+- The exact QEMU chardev spelling/backend for a Windows named pipe.
+- Whether control + bulk are two fds/pipes or one multiplexed channel (ties to OQ-3).
+- Confirm QEMU ends up with **no socket capability** (ties to T14's containment check and
+  D-45).

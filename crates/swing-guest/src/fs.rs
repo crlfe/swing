@@ -1,15 +1,15 @@
 //! fs primitives (design.md §6).
 //!
-//! Spike: read/write/list against a plain work directory rooted at `work_dir`.
-//! Paths are relative to that root and may not escape it.
+//! Read/write/list against a work directory rooted at `work_root`. Paths are
+//! relative to that root and may not escape it. In a sandboxed container the
+//! root is the bind-mounted `/work`; otherwise it is the inherited work dir.
 //!
 //! TODO (deferred, tracked in todo.md):
 //! - Chunked bulk transfer for large reads/writes (bulk stream) — currently a
 //!   single frame, so payloads are capped by MAX_FRAME_SIZE.
 //! - `fs.stat`, offset/limit paging beyond a single frame.
-//! - The real workspace mount / sandbox (T4).
 
-use std::net::TcpStream;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::Result;
@@ -24,7 +24,7 @@ const DEFAULT_READ_LIMIT: u64 = 3000;
 /// Resolve a model-supplied path against the work root, rejecting absolute
 /// paths and any `..` traversal. TODO: canonicalize + verify once the real
 /// workspace mount exists.
-fn safe_path(work_dir: &str, path: &str) -> Option<PathBuf> {
+fn safe_path(work_root: &str, path: &str) -> Option<PathBuf> {
     let p = Path::new(path);
     if p.as_os_str().is_empty() || p.is_absolute() {
         return None;
@@ -32,10 +32,10 @@ fn safe_path(work_dir: &str, path: &str) -> Option<PathBuf> {
     if p.components().any(|c| matches!(c, Component::ParentDir)) {
         return None;
     }
-    Some(Path::new(work_dir).join(p))
+    Some(Path::new(work_root).join(p))
 }
 
-fn send_err(conn: &mut Conn<TcpStream>, id: u32, call: u32, code: &str) -> Result<()> {
+fn send_err<S: Read + Write>(conn: &mut Conn<S>, id: u32, call: u32, code: &str) -> Result<()> {
     conn.send(
         Stream::Control,
         id,
@@ -52,16 +52,16 @@ fn send_err(conn: &mut Conn<TcpStream>, id: u32, call: u32, code: &str) -> Resul
     Ok(())
 }
 
-pub fn handle_read(
-    conn: &mut Conn<TcpStream>,
+pub fn handle_read<S: Read + Write>(
+    conn: &mut Conn<S>,
     id: u32,
     call: u32,
-    work_dir: &str,
+    work_root: &str,
     path: &str,
     offset: Option<u64>,
     limit: Option<u64>,
 ) -> Result<()> {
-    let full = match safe_path(work_dir, path) {
+    let full = match safe_path(work_root, path) {
         Some(p) => p,
         None => return send_err(conn, id, call, "bad_path"),
     };
@@ -99,15 +99,15 @@ pub fn handle_read(
     Ok(())
 }
 
-pub fn handle_write(
-    conn: &mut Conn<TcpStream>,
+pub fn handle_write<S: Read + Write>(
+    conn: &mut Conn<S>,
     id: u32,
     call: u32,
-    work_dir: &str,
+    work_root: &str,
     path: &str,
     body: &[u8],
 ) -> Result<()> {
-    let full = match safe_path(work_dir, path) {
+    let full = match safe_path(work_root, path) {
         Some(p) => p,
         None => return send_err(conn, id, call, "bad_path"),
     };
@@ -136,18 +136,18 @@ pub fn handle_write(
     Ok(())
 }
 
-pub fn handle_list(
-    conn: &mut Conn<TcpStream>,
+pub fn handle_list<S: Read + Write>(
+    conn: &mut Conn<S>,
     id: u32,
     call: u32,
-    work_dir: &str,
+    work_root: &str,
     path: &str,
 ) -> Result<()> {
     // "" or "." means the work root.
     let full = if path.is_empty() || path == "." {
-        PathBuf::from(work_dir)
+        PathBuf::from(work_root)
     } else {
-        match safe_path(work_dir, path) {
+        match safe_path(work_root, path) {
             Some(p) => p,
             None => return send_err(conn, id, call, "bad_path"),
         }

@@ -52,10 +52,13 @@ crates/
     src/session.rs         # agent loop (T2 full transcript, T5 terminal rule)
     src/tools.rs           # model-facing tool schema + dispatch (T1)
     src/guest.rs           # client to swing-guest over the control channel
-  swing-guest/             # guest coordinator (spike)
-    src/main.rs            # loopback listener + handshake + dispatch
+  swing-guest/             # guest: coordinator + container children
+    src/main.rs            # arg dispatch: coordinator vs `container` child
+    src/coordinator.rs     # loopback listener, handshake, fork + route by id
+    src/container.rs       # child: optional sandbox, then serve exec/fs frames
+    src/sandbox.rs         # opt-in unshare/mount/pivot_root/cap-drop (T4)
     src/exec.rs            # sh -c, stream stdout/stderr, exec_exit
-    src/fs.rs              # read/write/list against the work dir
+    src/fs.rs              # read/write/list against the work root
 ```
 
 ## Build
@@ -66,11 +69,17 @@ cargo build
 
 ## Run
 
-Start the guest first (it listens on loopback; its work dir is the process cwd):
+Start the guest first. It runs as a **coordinator** that listens on loopback and
+forks a `swing-guest container` child per container id (the child's work dir is the
+coordinator's cwd):
 
 ```sh
 # Run from whatever directory you want to act as the workspace.
 SWING_GUEST_ADDR=127.0.0.1:7700 cargo run -p swing-guest
+
+# Opt-in sandbox (unshare/mount/cap-drop in the container child). NOT yet
+# verified on-box — see todo.md T4. Toolchain bind set via SWING_SANDBOX_BINDS.
+SWING_SANDBOX=1 SWING_GUEST_ADDR=127.0.0.1:7700 cargo run -p swing-guest
 ```
 
 Then the server (terminal chat) in another shell:
