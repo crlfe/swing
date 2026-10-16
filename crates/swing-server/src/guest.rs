@@ -1,16 +1,24 @@
 //! Client to `swing-guest` over the control channel (design.md §5.2/§6).
 //!
+//! The server *spawns* `swing-guest` as a child and hands it one end of a
+//! `socketpair` as its stdin+stdout — the inherited-fd form of the private local
+//! channel (revised D-27). The server owns the child's lifetime.
+//!
 //! Single-threaded request/response for the spike: each call gets a fresh
 //! `call_id`; we read frames until the matching response arrives. Cancellation,
 //! concurrent calls, and the bulk stream are deferred (todo.md).
 
-use std::net::TcpStream;
+use std::fs::File;
+use std::os::fd::OwnedFd;
+use std::os::unix::net::UnixStream;
+use std::process::{Child, Command, Stdio};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use swing_proto::{Conn, FsEntry, Msg, RecvFrame, Stream};
 
 pub struct GuestClient {
-    conn: Conn<TcpStream>,
+    conn: Conn<UnixStream>,
+    child: Child,
     next_call: u32,
     /// Container/attempt id. The spike uses a single implicit container.
     id: u32,
@@ -31,10 +39,26 @@ pub struct FsReadResult {
 }
 
 impl GuestClient {
-    pub fn connect(addr: &str) -> Result<GuestClient> {
-        let stream = TcpStream::connect(addr)
-            .map_err(|e| anyhow!("cannot reach swing-guest at {addr}: {e}"))?;
-        let mut conn = Conn::new(stream);
+    /// Spawn `swing-guest` and wire one end of a `socketpair` to its stdin/stdout.
+    pub fn spawn(guest_bin: &str, work_dir: &str, sandbox: bool) -> Result<GuestClient> {
+        let (server_end, guest_end) = UnixStream::pair()?;
+
+        let mut cmd = Command::new(guest_bin);
+        cmd.arg("--work-dir").arg(work_dir);
+        if sandbox {
+            cmd.arg("--sandbox");
+        }
+        // Hand the guest one end of the socketpair as its stdin+stdout (same
+        // socket, two fds) — UnixStream -> OwnedFd -> File -> Stdio.
+        cmd.stdin(Stdio::from(File::from(OwnedFd::from(guest_end.try_clone()?))));
+        cmd.stdout(Stdio::from(File::from(OwnedFd::from(guest_end))));
+        cmd.stderr(Stdio::inherit());
+
+        let child = cmd
+            .spawn()
+            .with_context(|| format!("failed to spawn swing-guest at {guest_bin}"))?;
+
+        let mut conn = Conn::new(server_end);
 
         let hello = conn
             .recv()?
@@ -53,6 +77,7 @@ impl GuestClient {
 
         Ok(GuestClient {
             conn,
+            child,
             next_call: 0,
             id: 1,
         })
@@ -210,5 +235,16 @@ impl GuestClient {
             }
         }
         Err(anyhow!("guest closed while awaiting call {call}"))
+    }
+
+    /// Ask the guest to shut down (so it tears down its container children), then
+    /// reap the child as a backstop. The guest also exits on EOF if we just drop.
+    pub fn shutdown(mut self) -> Result<()> {
+        let _ = self
+            .conn
+            .send(Stream::Control, 0, 0, &Msg::Shutdown, Vec::new());
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        Ok(())
     }
 }

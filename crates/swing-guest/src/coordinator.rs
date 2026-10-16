@@ -5,10 +5,16 @@
 //! owns the frame's container id. Children are spawned with `Command` and
 //! given a `socketpair` as their stdin+stdout; framed messages are forwarded
 //! to the child and its response frames relayed back to the server.
+//!
+//! The server spawns this coordinator and hands it one end of a `socketpair` as
+//! its stdin+stdout — the inherited-fd form of the private local control channel
+//! (revised D-27). There is no listening socket and no socket file: the inherited
+//! fd *is* the capability boundary (D-45/D-46). Production swaps this fd for a
+//! virtio-serial chardev (and a DACL'd named pipe on Windows); T3/T13a.
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::net::{TcpListener, TcpStream};
+use std::io::{self, Read, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
@@ -21,47 +27,62 @@ struct ContainerHandle {
     child: Child,
 }
 
-pub fn run() -> Result<()> {
-    let addr = std::env::var("SWING_GUEST_ADDR").unwrap_or_else(|_| "127.0.0.1:7700".into());
-    // Work dir is the process cwd (spike: no per-ticket workspace mount yet, T4).
-    let work_dir = std::env::current_dir()?.to_string_lossy().into_owned();
-    // Sandbox is opt-in until it has been verified on-box (T4 / T14).
-    let sandbox = std::env::var("SWING_SANDBOX").map(|v| v == "1").unwrap_or(false);
+pub fn run(args: &[String]) -> Result<()> {
+    // The server spawns us and hands us one end of a socketpair as our
+    // stdin+stdout (the inherited-fd control channel). Flags come from the
+    // server; env vars remain as a fallback.
+    let mut sandbox = std::env::var("SWING_SANDBOX").map(|v| v == "1").unwrap_or(false);
+    let mut work_dir = match std::env::var("SWING_WORK_DIR") {
+        Ok(w) => w,
+        Err(_) => std::env::current_dir()?.to_string_lossy().into_owned(),
+    };
 
-    let listener = TcpListener::bind(&addr)?;
-    eprintln!(
-        "swing-guest coordinator on {addr} (work dir: {work_dir}, sandbox: {sandbox})"
-    );
-
-    // Spike: serve one server connection at a time.
-    for stream in listener.incoming() {
-        let stream = stream?;
-        eprintln!("swing-server connected");
-        let mut conn = Conn::new(stream);
-
-        // Handshake: build_id pairs with the server build so a version mismatch
-        // is a clear error, not garbage (design.md §7 "Versioning").
-        conn.send(
-            Stream::Control,
-            0,
-            0,
-            &Msg::Hello {
-                build_id: "swing-guest spike-1".into(),
-            },
-            Vec::new(),
-        )?;
-        conn.send(Stream::Control, 0, 0, &Msg::Ready, Vec::new())?;
-
-        if let Err(e) = handle(&mut conn, &work_dir, sandbox) {
-            eprintln!("session error: {e:#}");
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--sandbox" => sandbox = true,
+            "--work-dir" => {
+                i += 1;
+                if let Some(w) = args.get(i) {
+                    work_dir = w.clone();
+                }
+            }
+            _ => {}
         }
-
-        eprintln!("client disconnected");
+        i += 1;
     }
-    Ok(())
+
+    // Control channel is our inherited stdin+stdout (the server's socketpair
+    // end) — the same `Duplex` shape the container children use. No socket file,
+    // no listener: the fd *is* the capability boundary (D-45/D-46).
+    eprintln!(
+        "swing-guest coordinator (inherited channel; work dir: {work_dir}, sandbox: {sandbox})"
+    );
+    let conn = Conn::new(Duplex {
+        r: io::stdin(),
+        w: io::stdout(),
+    });
+    serve(conn, &work_dir, sandbox)
 }
 
-fn handle(conn: &mut Conn<TcpStream>, work_dir: &str, sandbox: bool) -> Result<()> {
+/// Handshake, then serve one server connection until it closes.
+fn serve<S: Read + Write>(mut conn: Conn<S>, work_dir: &str, sandbox: bool) -> Result<()> {
+    // Handshake: build_id pairs with the server build so a version mismatch
+    // is a clear error, not garbage (design.md §7 "Versioning").
+    conn.send(
+        Stream::Control,
+        0,
+        0,
+        &Msg::Hello {
+            build_id: "swing-guest spike-1".into(),
+        },
+        Vec::new(),
+    )?;
+    conn.send(Stream::Control, 0, 0, &Msg::Ready, Vec::new())?;
+    handle(&mut conn, work_dir, sandbox)
+}
+
+fn handle<S: Read + Write>(conn: &mut Conn<S>, work_dir: &str, sandbox: bool) -> Result<()> {
     let mut containers: HashMap<u32, ContainerHandle> = HashMap::new();
 
     while let Some(f) = conn.recv()? {
@@ -151,8 +172,8 @@ fn spawn_container(id: u32, work_dir: &str, sandbox: bool) -> Result<ContainerHa
 
 /// Relay the child's response frames back to the server until the call's
 /// terminal frame (exec_exit / fs_result / error) is seen.
-fn relay(
-    server: &mut Conn<TcpStream>,
+fn relay<S: Read + Write>(
+    server: &mut Conn<S>,
     child: &mut Conn<UnixStream>,
     id: u32,
     call: u32,
@@ -176,8 +197,8 @@ fn relay(
     Ok(())
 }
 
-fn conn_error(
-    server: &mut Conn<TcpStream>,
+fn conn_error<S: Read + Write>(
+    server: &mut Conn<S>,
     id: u32,
     call: u32,
     code: &str,
@@ -194,4 +215,27 @@ fn conn_error(
         Vec::new(),
     )?;
     Ok(())
+}
+
+/// A single `Read + Write` handle over the coordinator's stdin (reads) and
+/// stdout (writes). Both are the same `socketpair` end the server created, so
+/// this is a full-duplex framed channel without needing an unsafe fd dup.
+struct Duplex {
+    r: io::Stdin,
+    w: io::Stdout,
+}
+
+impl Read for Duplex {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.r.read(buf)
+    }
+}
+
+impl Write for Duplex {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.w.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.w.flush()
+    }
 }

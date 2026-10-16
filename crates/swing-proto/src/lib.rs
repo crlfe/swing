@@ -7,7 +7,8 @@
 //!
 //! This crate is deliberately runtime-agnostic: the codec works over
 //! `std::io::Read`/`Write`, so `swing-server` and `swing-guest` can each pick
-//! their own transport (loopback TCP in the spike; virtio-serial in production).
+//! their own transport (a `socketpair` in the spike; a private local channel —
+//! socketpair/pipe to virtio-serial — in production, revised D-27).
 
 pub mod frame;
 pub mod msg;

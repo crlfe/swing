@@ -3,8 +3,10 @@
 //!   swing-guest                 # coordinator: control channel + container children
 //!   swing-guest container ...   # container child: sandbox + exec/fs serving
 //!
-//! The coordinator speaks the framed protocol to `swing-server` over loopback
-//! TCP and forks `swing-guest container` children (via `std::process::Command`,
+//! The coordinator speaks the framed protocol to `swing-server` over its control
+//! channel — a `socketpair` inherited from the server that spawns it (the prototype
+//! form; a private local channel — socketpair/pipe — in production, revised D-27) —
+//! and forks `swing-guest container` children (via `std::process::Command`,
 //! never `fork()` from an async runtime), routing exec/fs frames to the child
 //! for that container id. The child optionally sandboxes itself (unshare/mount/
 //! cap-drop) and then serves exec/fs within that sandbox.
@@ -25,5 +27,5 @@ fn main() -> Result<()> {
     if args.get(1).map(|s| s.as_str()) == Some("container") {
         return container::run(&args[2..]);
     }
-    coordinator::run()
+    coordinator::run(&args[1..])
 }

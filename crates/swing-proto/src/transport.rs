@@ -1,8 +1,10 @@
 //! A framed connection: turn a byte stream into typed request/response frames.
 //!
 //! `Conn` owns the socket, assigns a monotonic `seq` per (stream, id), and
-//! serializes `Msg` into the JSON header. Both `swing-server` and `swing-guest`
-//! use it over a `std::net::TcpStream` in the spike.
+//! serializes `Msg` into the JSON header. It is transport-agnostic (`Read +
+//! Write`); in the spike both `swing-server` and `swing-guest` use it over a
+//! `std::os::unix::net::UnixStream` — the server↔guest socketpair and the
+//! coordinator↔child socketpairs (the child side via a stdin/stdout `Duplex`).
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};

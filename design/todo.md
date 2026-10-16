@@ -8,9 +8,10 @@ where the first product-quality version lands is deliberately left open.
 Resolved since the last version, so they are no longer listed here: **container
 lifetime tied to ticket status — created on start, destroyed only on delete, parking
 keeps the container (D-35, revised)**, **control-channel transport switched from loopback
-TCP to a private local channel — fd-passing on Unix, DACL-secured named pipe on Windows
-(D-19, D-27 revised; D-44, D-45)**, network backend rejection (D-28 … D-31), image size
-budget (D-36), **egress mechanism switched from SOCKS5 to transparent interception
+TCP to a private local channel — fd-passing / Unix socket on Unix, DACL-secured named pipe
+on Windows — for both the QEMU and CLI channels, leaving loopback TCP only for the browser
+HTTP API (D-19, D-27 revised; D-44, D-45, D-46)**, network backend rejection (D-28 … D-31),
+image size budget (D-36), **egress mechanism switched from SOCKS5 to transparent interception
 (D-32, D-38 … D-40)**.
 
 ---
@@ -30,8 +31,10 @@ API, no daemon, and no token auth in this step.
 - **Frame format + one local channel + the two-process split (T3).** **Decided (D-42):
   serde (`serde_json`) header, max frame size 4 KiB** (provisional). Implement the §7
   header over a single `socketpair()` (the Unix form of the production transport) with the
-  `stream` field multiplexing control/exec/log. Still open (non-blocking): `schema.toml`,
-  channel count, backpressure.
+  `stream` field multiplexing control/exec/log. **Done:** the server now spawns
+  `swing-guest` and wires the §7 header over a `socketpair()` it hands the child as its
+  stdin/stdout (inherited fd; no socket file, no listener). Still open (non-blocking):
+  `schema.toml`, channel count, backpressure.
 - **Tool schema for the four tools (T1).** **Decided (D-43): `shell` takes a `command`
   string** (run via `sh -c`). The §6 draft is enough to start; still pin a truncation
   marker and model-actionable error shapes (`no_such_file`, not a raw errno).
@@ -390,11 +393,23 @@ what the ticket records about which secrets an attempt had access to.
 
 ### T23. Localhost HTTP API and webapp surface  *(OQ-13)*
 Who may connect, token distribution, whether the webapp or the TUI is primary, what
-the API exposes. This is the first host-side listener a browser touches. After the D-27
-revision the QEMU channel is a private fd/pipe and needs no token, so **loopback TCP now
-applies only to this CLI/HTTP surface** — which makes it the one place where a token is the
-only thing distinguishing an authorized client from any other local process. Consider
-whether the same platform-native local-channel approach should eventually replace it.
+the API exposes. After D-27/D-46 the CLI and QEMU channels are private local channels, so
+this is the **only remaining loopback TCP server** and the only surface where a token is the
+capability boundary — a browser cannot open a Unix socket or a named pipe, so it must have a
+port. Decide who may connect and how the token is distributed.
+
+### T23a. CLI↔server transport  *(OQ-22, D-46)*
+Move the CLI↔server channel off loopback TCP onto a private local channel: a listening Unix
+domain socket (Linux/macOS) or a named pipe with a DACL scoped to the user's SID (Windows).
+- Confirm the `sockaddr_un` path-length limit (~104 chars on macOS) — pick a short socket
+  path under the state dir.
+- Confirm the Windows named-pipe DACL admits only the user's SID.
+- Socket-file / pipe lifecycle on server crash (stale socket) — ties to OQ-15 / T8b.
+- This removes the handshake token from the CLI channel; the token story stays only on the
+  HTTP API surface (T23).
+
+Deferred with the daemon (B5), but the server's design must use the local channel from the
+start so the HTTP listener is the only TCP server.
 
 ### T24. Mediated egress: verify the mechanism  *(OQ-21)*
 Transparent interception via the TPROXY family is chosen (D-32). **The mechanism is
@@ -524,9 +539,12 @@ compromises the VM image for every user.
   Mitigated by device minimization, no network backend compiled in, and Linux
   `-sandbox on`; not solved.
 - **The control-channel transport is now per-platform and asserted, not proven** (T13a,
-  OQ-22). Two implementations (fd-passing on Unix, named pipe + DACL + restricted token on
-  Windows) replace the single loopback path; the Windows mechanism in particular is
-  unverified. If it fails, loopback TCP for the QEMU channel is the fallback.
+  T23a, OQ-22). Two implementations (fd-passing / Unix socket on Unix, named pipe + DACL on
+  Windows) replace the single loopback path for both the QEMU and CLI channels; the Windows
+  mechanism in particular is unverified. There is **no loopback-TCP fallback**: if the
+  platform-native channel cannot be established with the full `-sandbox` / restricted-token
+  grant, Swing fails with a clear error rather than falling back to a TCP transport that
+  would re-grant QEMU a socket capability (D-45).
 - **`swing-server` is now the most powerful component**: host network, credentials,
   and network tools executed on the model's behalf. See T17 and T24.
 - **`swing-guest` runs as root in the guest** and is trusted by the server. A

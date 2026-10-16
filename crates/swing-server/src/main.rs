@@ -2,8 +2,9 @@
 //! `swing-guest` container over the control channel.
 //!
 //! Spike scope (todo.md "First step"): UI is stdin/stdout — no TUI, no webapp,
-//! no HTTP API, no daemon, no token auth. The server connects to a guest that
-//! is already listening on loopback (D-27); spawning the guest is a later step.
+//! no HTTP API, no daemon, no token auth. The server spawns `swing-guest` as a
+//! child and speaks to it over a `socketpair` it hands the child as its control
+//! channel (revised D-27); the server owns the guest's lifetime.
 //!
 //! TODO (deferred): daemon + pidfile + crash semantics (T8b), ticket DB (T8),
 //! scheduler (T6), metering (T28), `unshare` sandbox (T4).
@@ -30,10 +31,12 @@ fn main() -> Result<()> {
     let cfg = config::Config::from_env()?;
     println!("swing-server (spike)");
     println!("  model: {}", cfg.model.as_deref().unwrap_or("(unset)"));
-    println!("  guest: {}", cfg.guest_addr);
+    println!("  guest: {} (spawned)", cfg.guest_bin);
+    println!("  work dir: {}", cfg.work_dir);
+    println!("  sandbox: {}", cfg.sandbox);
     println!("Type a message and press enter. ':quit' to exit.\n");
 
-    let mut guest = guest::GuestClient::connect(&cfg.guest_addr)?;
+    let mut guest = guest::GuestClient::spawn(&cfg.guest_bin, &cfg.work_dir, cfg.sandbox)?;
     let provider = provider::Provider::new(&cfg);
     let session = session::Session::new(provider);
 
@@ -63,5 +66,6 @@ fn main() -> Result<()> {
         }
     }
 
+    guest.shutdown()?;
     Ok(())
 }

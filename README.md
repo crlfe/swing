@@ -13,10 +13,12 @@ will change as we prototype.
 
 Real (the spike's point):
 
-- **Framed two-process boundary** (`swing-server` ↔ `swing-guest`) over one
-  loopback TCP socket using the §7 binary frame format (D-42). Keeping this
-  boundary from day 1 means the later virtio-serial swap is a config change, not
-  a rewrite.
+- **Framed two-process boundary** (`swing-server` ↔ `swing-guest`) over a single
+  byte-stream channel using the §7 binary frame format (D-42). The server **spawns**
+  `swing-guest` and hands it one end of a `socketpair()` as its control channel — the Unix
+  form of the private local channel (revised D-27); production swaps that fd for a
+  virtio-serial chardev (and a named pipe on Windows). No loopback TCP, no port, no socket
+  file. Keeping the framed boundary from day 1 means the swap is a config change, not a rewrite.
 - **OpenAI-compatible Chat Completions** provider (D-41), configured via
   `OPENAI_BASE_URL` (required) / `OPENAI_MODEL` / `OPENAI_API_KEY` (optional).
   Complete-response tool calls (no streaming).
@@ -54,7 +56,7 @@ crates/
     src/guest.rs           # client to swing-guest over the control channel
   swing-guest/             # guest: coordinator + container children
     src/main.rs            # arg dispatch: coordinator vs `container` child
-    src/coordinator.rs     # loopback listener, handshake, fork + route by id
+    src/coordinator.rs     # inherited socketpair channel, handshake, fork + route by id
     src/container.rs       # child: optional sandbox, then serve exec/fs frames
     src/sandbox.rs         # opt-in unshare/mount/pivot_root/cap-drop (T4)
     src/exec.rs            # sh -c, stream stdout/stderr, exec_exit
@@ -69,20 +71,9 @@ cargo build
 
 ## Run
 
-Start the guest first. It runs as a **coordinator** that listens on loopback and
-forks a `swing-guest container` child per container id (the child's work dir is the
-coordinator's cwd):
-
-```sh
-# Run from whatever directory you want to act as the workspace.
-SWING_GUEST_ADDR=127.0.0.1:7700 cargo run -p swing-guest
-
-# Opt-in sandbox (unshare/mount/cap-drop in the container child). NOT yet
-# verified on-box — see todo.md T4. Toolchain bind set via SWING_SANDBOX_BINDS.
-SWING_SANDBOX=1 SWING_GUEST_ADDR=127.0.0.1:7700 cargo run -p swing-guest
-```
-
-Then the server (terminal chat) in another shell:
+Run the server. It **spawns `swing-guest` as a child** and hands it one end of a
+`socketpair` as its control channel (revised D-27); the coordinator in turn forks a
+`swing-guest container` child per container id.
 
 ```sh
 # Required: the provider endpoint. There is no default, so a missing base URL
@@ -92,8 +83,21 @@ export OPENAI_BASE_URL=https://api.openai.com/v1
 # `Authorization` header.
 export OPENAI_MODEL=gpt-4o-mini
 export OPENAI_API_KEY=sk-...
+
+# The server spawns the guest binary (default: a `swing-guest` sibling of the
+# server binary in the cargo target dir; override with SWING_GUEST_BIN). The
+# workspace is the server's cwd (override with SWING_WORK_DIR).
 cargo run -p swing-server
 ```
+
+Opt-in sandbox (unshare/mount/cap-drop in the container child). NOT yet verified
+on-box — see todo.md T4. Toolchain bind set via `SWING_SANDBOX_BINDS`:
+
+```sh
+SWING_SANDBOX=1 cargo run -p swing-server
+```
+
+`swing-guest` is never run standalone — the server always spawns it.
 
 Type a message; the model may call tools (which run in the guest's work dir) and
 the turn ends when it replies with plain text. `:quit` exits.

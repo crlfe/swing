@@ -3,7 +3,7 @@
 **Swing** (as in "take a swing at it").
 
 Status: draft v6, pre-prototype. Resolved items are in [Decisions](#20-decisions)
-(D-1 … D-45); unresolved items are in [Open Questions](#21-open-questions)
+(D-1 … D-46); unresolved items are in [Open Questions](#21-open-questions)
 (OQ-1 … OQ-22) and [`todo.md`](todo.md).
 
 ---
@@ -92,7 +92,7 @@ HOST                                                   GUEST (the VM)
                                                     no NIC, no route, caps dropped,
                                                     mount+PID+net+IPC namespaces, cgroup
         ▲
-        │ loopback TCP
+        │ socket / pipe
      swing (CLI, thin client + TUI)
 ```
 
@@ -115,9 +115,9 @@ swing status
 `swing-server` is the long-lived supervisor. It owns the QEMU child, the ticket
 database, LLM provider connections, the scheduler, and the control channel to QEMU (an
 inherited fd on Unix, a DACL-secured named pipe on Windows). CLI invocations are thin
-clients of it over a loopback control socket.
-CLI invocations are thin clients of it. This is the `docker` / `wsl` shape and it
-works identically on all three host platforms.
+clients of it over a private local control channel (a Unix socket file on Linux/macOS, a
+named pipe on Windows). This is the `docker` / `wsl` shape: the supervisor pattern is the
+same on all three host platforms, though the channel object itself is platform-native.
 
 Built for the host platform. Rust.
 
@@ -604,7 +604,10 @@ Boundaries, outermost first:
 2. **Guest → host.** Only the control channel. Only framed messages the server
    explicitly understands. The channel is a private object held only by the server and the
    QEMU child — an inherited fd (Unix) or a DACL-secured named pipe (Windows) — so there is
-   no listening socket, no port, and no handshake token to steal. All transfers are
+   no listening socket, no port, and no handshake token to steal. (That "no listener" claim
+   is specific to the QEMU channel; the host-side CLI channel *is* a listening socket file /
+   pipe gated by file permissions or a DACL, and the browser-facing HTTP API is a loopback
+   TCP listener — see §15 and OQ-13.) All transfers are
    server-initiated, except through the mediated-egress subsystem, which is
    deny-by-default and fully audited.
 3. **Model → host.** The model can only cause tool calls the server recognizes. It
@@ -635,8 +638,10 @@ Known weak points, deliberately accepted in v1:
 - Mediated egress, when it ships, enlarges this further: any code in a container —
   including a malicious dependency — can open connections subject to an L4 filter.
 - `swing-guest` runs as root in the guest and is trusted by the server.
-- The localhost HTTP API + webapp is the first host-side listener a browser touches.
-  Loopback bind + token auth; decide whether any local process may connect (OQ-13).
+- The localhost HTTP API + webapp is the first host-side listener a browser touches and the
+  **only** remaining loopback TCP server (the CLI and QEMU channels are private local
+  channels). Loopback bind + token auth; decide whether any local process may connect
+  (OQ-13).
 - Image distribution moves from a bundled artifact to a network download (see
   [§16a](#16a-image-distribution-and-updates)). The download endpoint, the signing
   key, and the delta-application path become as trusted as the flake build.
@@ -687,7 +692,11 @@ T13a spike (OQ-22).
 **Build guarantee:** our QEMU build compiles in **no network backend** — no libslirp,
 no `virtio-net`, no `passt`. "The VM has no network device" is then a build-time
 property rather than a config-time one, and a flag typo cannot reintroduce it. If
-mediated egress ever needs a backend, that guarantee is walked back deliberately.
+mediated egress ever needs a backend, that guarantee is walked back deliberately. There is
+**no loopback-TCP fallback for the control channel**: if the platform-native channel cannot
+be established with the full `-sandbox` / restricted-token grant, Swing fails with a clear
+error rather than falling back to a TCP transport that would re-grant QEMU a socket
+capability (D-45).
 
 | Option | Linux | macOS | Windows |
 |---|---|---|---|
@@ -718,8 +727,10 @@ Notes:
 - `-sandbox on` is Linux-only; no security property in this design may depend on it.
   With no network backend compiled in **and the control channel now an inherited fd rather
   than a TCP connection**, the sandbox grant QEMU needs is essentially file read/write plus
-  the two channel descriptors — QEMU is granted **no socket capability at all**. On Windows
-  the restricted token is scoped the same way: file access plus the named-pipe handle.
+  the two channel descriptors — QEMU is granted **no socket-creation capability** (no
+  `socket`/`bind`/`listen`/`connect` syscalls; the channel is a pre-connected fd it only
+  reads and writes, which is why the AF_UNIX chardev row above is marked "not used"). On
+  Windows the restricted token is scoped the same way: file access plus the named-pipe handle.
 - QEMU ships in the artifact bundle per platform, never found on `PATH`.
 
 ## 15. Process model and platform integration
@@ -736,8 +747,9 @@ use none of them in v1:
 
 A Windows service is the wrong shape for "runs as the developer's uid," and session-0
 isolation would foreclose the GUI milestone. So: **a detached per-user process with a
-pidfile and a loopback control socket**, which works identically everywhere and needs
-no install step. Precedents: `wsl.exe` + `LxssManager`, Docker Desktop, OrbStack.
+pidfile and a private local control channel** (a Unix socket file on Linux/macOS, a named
+pipe on Windows). The supervisor pattern needs no install step and works on all three
+platforms, though the channel object is platform-native. Precedents: `wsl.exe` + `LxssManager`, Docker Desktop, OrbStack.
 
 Detaching details:
 
@@ -746,14 +758,19 @@ Detaching details:
 - **Job objects:** if the server puts QEMU in a Windows job object (a common cleanup
   idiom), QEMU dies with the server. Decide deliberately.
 - Windows has no SIGHUP and no clean signal; shutdown is a control-channel message.
-- IPC: **two mechanisms, deliberately.** The **server ↔ QEMU** control channel is a private
-  local channel — an inherited fd (`socketpair`, Unix) or a DACL-secured named pipe
-  (Windows) — never a network port. The **CLI ↔ server** channel and the localhost HTTP API
-  stay **loopback TCP** (a host-side listener surface governed by OQ-13, not part of the VM
-  boundary). Track A's server ↔ `swing-guest` link mirrors the Unix fd form (a
-  `socketpair`) so the B2 swap to virtio-serial stays a config change. The QEMU channel
-  needs no handshake token — the fd / pipe handle *is* the capability; the token story now
-  applies only to the CLI/HTTP surface.
+- IPC: **a private local channel everywhere except the browser surface.**
+  - **server ↔ QEMU** — an inherited fd (`socketpair`, Unix) or a DACL-secured named pipe
+    (Windows); QEMU is a child we spawn, so we hand it the descriptor / pipe handle.
+  - **server ↔ CLI** — a *listening* Unix domain socket (Linux/macOS) or a named pipe whose
+    DACL is scoped to the user's SID (Windows); the CLI is an independent process that
+    connects later, so the server binds the socket file / creates the pipe. A socket file at
+    `0600` or a DACL'd pipe means only this user's processes can connect — no handshake token
+    needed on this channel.
+  - **HTTP API / webapp** — **loopback TCP**, the *only* place a TCP server is used, because
+    a browser cannot open a Unix socket or a named pipe. Token auth (OQ-13) stays here.
+
+  Track A's server ↔ `swing-guest` link mirrors the Unix fd form (a `socketpair`) so the B2
+  swap to virtio-serial stays a config change.
 - Login-start registration (systemd user unit / LaunchAgent / Task Scheduler) is
   deferred to B5, but the server's design must tolerate being started by something
   other than the CLI.
@@ -833,7 +850,10 @@ framed messages cross it. Use a **`socketpair()` between `swing-server` and `swi
 — the Unix form of the real control channel — and never rely on fd inheritance beyond the
 connected stream itself, exit codes, signals, or process ownership across the boundary.
 Hold that line and swapping the socketpair for a virtio-serial chardev is a configuration
-change, not a code change. Use the real binary frame format from day one.
+change, not a code change. Use the real binary frame format from day one. The server
+spawns `swing-guest` and hands it one end of the socketpair as its stdin/stdout; the guest
+binds no path and opens no listener (the listening-socket form belongs only to the
+CLI↔server channel, D-46).
 
 Scope: one LLM provider; four tools; tickets as plain JSON files; no DAG, no parking
 (until A2), no webapp, no package installation, no baseline Nix environment. The
@@ -936,7 +956,7 @@ environment: { packages: [] }
 | D-24 | Prototype is Linux-only; QEMU invocation and abstractions stay portable. |
 | D-25 | cgroup `memory.max` / `pids.max` as fault isolation, not fairness. |
 | D-26 | Two parallel tracks: QEMU-free PoC (A) and buildability spikes (B). |
-| D-27 | **Server↔QEMU is a platform-native local channel** (fd-passing on Unix, named pipe on Windows), not a loopback port. CLI↔server and the HTTP API stay loopback TCP; Track A mirrors the Unix fd form (a `socketpair`). *(revised)* |
+| D-27 | **Server↔QEMU and server↔CLI are platform-native local channels** (fd-passing / Unix socket on Unix, named pipe on Windows), not loopback ports. **Loopback TCP is reserved for the browser-facing HTTP API/webapp only**; Track A mirrors the Unix fd form (a `socketpair`). *(revised)* |
 | D-28 | Our QEMU build compiles in **no network backend**: no libslirp, no `virtio-net`, no `passt`. |
 | D-29 | QEMU user networking (slirp) is rejected: stack inside the boundary process, requires socket grants, no filtering, no audit. |
 | D-30 | passt is rejected: its own documentation states it is not portable, and portability is the reason QEMU is in this design. |
@@ -955,6 +975,7 @@ environment: { packages: [] }
 | D-43 | The `shell` tool takes a **`command` string** (run via `sh -c`), not `argv`, in v1. |
 | D-44 | On Windows the QEMU channel is a **named pipe secured by a DACL** granting access only to QEMU's **restricted token** (`CreateRestrictedToken`); the DACL is the capability boundary, replacing the handshake token. |
 | D-45 | QEMU is granted **no socket capability**: the control channel is an inherited fd or a pipe handle, so the `-sandbox` / restricted-token grant is file I/O plus the channel handles only. Reinforces D-28. |
+| D-46 | The **CLI↔server** channel is a private local channel — a listening Unix domain socket (Linux/macOS) or a named pipe with a DACL scoped to the user's SID (Windows). The OS object (socket-file perms / pipe DACL) is the capability boundary, so this channel needs no handshake token. The TCP server exists only for the browser-facing HTTP API/webapp. |
 
 ## 21. Open questions
 
@@ -1041,6 +1062,9 @@ export the closure for archival only. Needs an answer before B4.
 
 ### OQ-13 — Localhost HTTP API and webapp surface
 
+After D-27/D-46 the CLI and QEMU channels are private local channels, so **this is the only
+remaining loopback TCP server** — and the only surface where a token is the capability
+boundary (a browser cannot use a Unix socket or a named pipe, so it must have a port).
 Loopback bind + token auth is assumed. Decide: who may connect, how the token is
 distributed, whether the webapp is the primary UI or the TUI is, and what the API
 exposes. This is the first host-side listener a browser touches.
@@ -1150,3 +1174,7 @@ spike (T13a):
 - Whether control + bulk are two fds/pipes or one multiplexed channel (ties to OQ-3).
 - Confirm QEMU ends up with **no socket capability** (ties to T14's containment check and
   D-45).
+- **CLI↔server channel (D-46):** confirm a listening Unix domain socket works on Linux and
+  macOS — mind the `sockaddr_un` path-length limit (~104 chars on macOS), so pick a short
+  socket path — and that a Windows named pipe can be created with a DACL scoped to the
+  user's SID. Confirm the socket-file / pipe lifecycle on server crash (ties to OQ-15).

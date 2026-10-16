@@ -5,15 +5,20 @@
 //! optional (the request omits the `model` field / `Authorization` header when
 //! they are unset).
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 
 #[derive(Clone)]
 pub struct Config {
     pub base_url: String,
     pub model: Option<String>,
     pub api_key: Option<String>,
-    /// Loopback address of `swing-guest` (D-27: loopback TCP everywhere).
-    pub guest_addr: String,
+    /// Path to the `swing-guest` binary the server spawns as a child. The server
+    /// hands it one end of a `socketpair` as its control channel (revised D-27).
+    pub guest_bin: String,
+    /// Host work directory handed to the guest as the container workspace.
+    pub work_dir: String,
+    /// Opt-in sandbox in the container child (T4).
+    pub sandbox: bool,
 }
 
 /// Unset or empty counts as absent.
@@ -31,14 +36,34 @@ impl Config {
         };
         let model = optional_env("OPENAI_MODEL");
         let api_key = optional_env("OPENAI_API_KEY");
-        let guest_addr =
-            std::env::var("SWING_GUEST_ADDR").unwrap_or_else(|_| "127.0.0.1:7700".into());
+        // The guest binary: SWING_GUEST_BIN, else a `swing-guest` sibling of this
+        // binary (the cargo target dir). Verify it exists so a missing guest is a
+        // clear error, not a spawn failure later.
+        let guest_bin = match optional_env("SWING_GUEST_BIN") {
+            Some(b) => b,
+            None => {
+                let exe = std::env::current_exe()?;
+                let dir = exe.parent().ok_or_else(|| anyhow!("cannot locate binary dir"))?;
+                dir.join("swing-guest").to_string_lossy().into_owned()
+            }
+        };
+        if !std::path::Path::new(&guest_bin).exists() {
+            bail!("swing-guest binary not found at {guest_bin} (set SWING_GUEST_BIN)");
+        }
+
+        let work_dir = match optional_env("SWING_WORK_DIR") {
+            Some(d) => d,
+            None => std::env::current_dir()?.to_string_lossy().into_owned(),
+        };
+        let sandbox = std::env::var("SWING_SANDBOX").map(|v| v == "1").unwrap_or(false);
 
         Ok(Config {
             base_url,
             model,
             api_key,
-            guest_addr,
+            guest_bin,
+            work_dir,
+            sandbox,
         })
     }
 }
