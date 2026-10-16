@@ -1494,8 +1494,11 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 		}
 	}
 
+	// A cancelled context (Ctrl-C) or a mid-stream read error surfaces here.
+	// Return the partial assistantMsg rather than discarding it: the caller
+	// saves the reasoning/output accumulated so far into the context.
 	if err := scanner.Err(); err != nil {
-		return Message{}, fmt.Errorf("error reading stream: %v", err)
+		return assistantMsg, fmt.Errorf("error reading stream: %v", err)
 	}
 
 	return assistantMsg, nil
@@ -1756,6 +1759,27 @@ func main() {
 
 			if err != nil {
 				if turnCtx.Err() != nil {
+					// Ctrl-C cut the stream short. Keep whatever reasoning or
+					// output was already streamed, and mark it as interrupted so
+					// the model can see the turn was cut off rather than finished.
+					if assistantMsg.Reasoning != "" || assistantMsg.ReasoningContent != "" ||
+						assistantMsg.Content != "" || len(assistantMsg.ToolCalls) > 0 {
+						if assistantMsg.Content == "" {
+							assistantMsg.Content = "[Request interrupted by user]"
+						} else {
+							assistantMsg.Content += "\n\n[Request interrupted by user]"
+						}
+						messages = append(messages, assistantMsg)
+						// Answer any tool_calls the partial turn emitted, so the
+						// next request is not poisoned by unanswered calls.
+						for _, tc := range assistantMsg.ToolCalls {
+							messages = append(messages, Message{
+								Role:       "tool",
+								Content:    "Error: interrupted by the user before this tool ran",
+								ToolCallID: tc.ID,
+							})
+						}
+					}
 					fmt.Println("\nInterrupted! Returning to prompt...")
 					if log != nil {
 						log.logPlain("Interrupted! Returning to prompt...")
