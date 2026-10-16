@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 )
 
@@ -344,6 +345,7 @@ type Config struct {
 	APIKey          string
 	Model           string
 	ReasoningEffort string
+	LogDir          string
 }
 
 // No client timeout: a streamed turn can stay open for minutes, and the
@@ -358,6 +360,117 @@ func sanitizeForTerminal(s string) string {
 		return -1
 	}, s)
 }
+
+// sessionLog writes the session transcript to a log file in addition to the
+// terminal. Reasoning is wrapped in <think>/</think> lines so it can be copied
+// out cleanly; content and other terminal output are written plain. The writer
+// keeps its own line-position state so the tags always land on their own lines,
+// independent of the terminal's blank-line separators. This state is the log's
+// mirror of the terminal's lastMode/lastChar, not extra bookkeeping: inThink
+// tracks "currently reasoning" and atLineStart tracks "last char was a newline".
+type sessionLog struct {
+	f           *os.File
+	w           *bufio.Writer
+	atLineStart bool
+	inThink     bool
+}
+
+// newSessionLog creates <dir>/<startTime>.log, making dir if needed. The
+// starting time is captured by the caller so the name reflects when the tool
+// began, not when the first write happened.
+func newSessionLog(dir string, startTime time.Time) (*sessionLog, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	name := filepath.Join(dir, startTime.Format("2006-01-02T15:04:05")+".log")
+	f, err := os.Create(name)
+	if err != nil {
+		return nil, err
+	}
+	// A fresh file begins at a line boundary.
+	return &sessionLog{f: f, w: bufio.NewWriter(f), atLineStart: true}, nil
+}
+
+// ensureNewline starts a new line if the previous write left one open, so the
+// next thing written (a tag or a line) never shares a line with earlier text.
+func (l *sessionLog) ensureNewline() {
+	if !l.atLineStart {
+		l.w.WriteByte('\n')
+		l.atLineStart = true
+	}
+}
+
+// writeText appends already-sanitized text verbatim and updates line position.
+func (l *sessionLog) writeText(text string) {
+	if text == "" {
+		return
+	}
+	l.w.WriteString(text)
+	l.atLineStart = strings.HasSuffix(text, "\n")
+}
+
+// writeReasoning appends reasoning, opening a <think> block if none is open.
+func (l *sessionLog) writeReasoning(text string) {
+	if text == "" {
+		return
+	}
+	if !l.inThink {
+		l.ensureNewline()
+		l.w.WriteString("\n<think>\n")
+		l.inThink = true
+		l.atLineStart = true
+	}
+	l.writeText(text)
+}
+
+// writeContent appends content, closing any open <think> block first so the
+// closing tag sits on its own line.
+func (l *sessionLog) writeContent(text string) {
+	if text == "" {
+		return
+	}
+	l.closeThink()
+	l.writeText(text)
+}
+
+// logPlain writes a standalone line (header, prompt, error) outside any think
+// block, closing an open block first so tags never swallow it.
+func (l *sessionLog) logPlain(text string) {
+	l.closeThink()
+	l.ensureNewline()
+	l.w.WriteString(text)
+	l.atLineStart = strings.HasSuffix(text, "\n")
+}
+
+// closeThink ends an open <think> block, putting </think> on its own line. It
+// is idempotent, so the end-of-turn close and a content transition never
+// double-close.
+func (l *sessionLog) closeThink() {
+	if !l.inThink {
+		return
+	}
+	l.ensureNewline()
+	l.w.WriteString("</think>\n\n")
+	l.inThink = false
+	l.atLineStart = true
+}
+
+// flush pushes buffered text to disk without closing the file.
+func (l *sessionLog) flush() {
+	l.w.Flush()
+}
+
+// Close flushes remaining text and closes the file.
+func (l *sessionLog) Close() {
+	l.ensureNewline()
+	l.w.Flush()
+	l.f.Close()
+}
+
+// activeLog is the session log for the current run, or nil when -l/--log was
+// not given. Tool handlers reach it through logToolCall, which has no logger
+// threaded through it, so it lives at package scope. main sets it once.
+var activeLog *sessionLog
 
 // getRangeString renders the tool-facing range annotation for a log line.
 // Unset bounds (0) render as "start"/"end" so every case shares one format.
@@ -615,7 +728,12 @@ func resolvePath(path string) (string, error) {
 }
 
 func logToolCall(format string, args ...any) {
-	fmt.Printf("\033[32m[Tool]\033[0m "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	fmt.Printf("\033[32m[Tool]\033[0m %s\n", msg)
+	if activeLog != nil {
+		activeLog.logPlain("[Tool] " + msg)
+		activeLog.flush()
+	}
 }
 
 // parseArgs decodes a tool's JSON arguments into its argument struct,
@@ -1174,7 +1292,14 @@ func executeTool(tc ToolCall, writesAllowed bool) (string, error) {
 // ctx is what bounds the request: cancelling it stops the read loop and ends
 // the turn. isFirstTurn only controls whether a leading newline separates this
 // turn's output from the banner.
-func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, isFirstTurn bool) (Message, error) {
+func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, isFirstTurn bool, log *sessionLog) (Message, error) {
+	// Close any reasoning block opened during this call and flush, on every
+	// return path (normal end, stream error, or interrupt). Defers run LIFO, so
+	// closeThink runs first to write </think>, then flush pushes it to disk.
+	if log != nil {
+		defer log.flush()
+		defer log.closeThink()
+	}
 	reqBody := ChatRequest{
 		Model:           cfg.Model,
 		Messages:        messages,
@@ -1242,6 +1367,17 @@ func callEndpointStreaming(ctx context.Context, cfg Config, messages []Message, 
 			}
 		}
 		sanitized := sanitizeForTerminal(text)
+		// Log the same sanitized text the terminal shows, minus the ANSI color
+		// that is added below. Reasoning is wrapped in <think>/</think> by the
+		// logger; the open/close decision rides on the same mode the terminal
+		// already tracks, so no extra state is needed here.
+		if log != nil {
+			if mode == modeReasoning {
+				log.writeReasoning(sanitized)
+			} else {
+				log.writeContent(sanitized)
+			}
+		}
 		if sanitized != "" {
 			lastChar = rune(sanitized[len(sanitized)-1])
 		}
@@ -1384,6 +1520,7 @@ Options:
   -u, --url <url>           Endpoint base URL (typically includes '/v1')
   -m, --model <model>       Model to call
   -r, --reasoning <effort>  Reasoning effort (none, low, medium, high)
+  -l, --log <dir>           Log the session to <dir>/<start-time>.log
       --help                Show this help message
       --version             Show version and licensing information
 
@@ -1427,6 +1564,8 @@ func main() {
 		"--model":     {&cfg.Model, "--model"},
 		"-r":          {&cfg.ReasoningEffort, "--reasoning"},
 		"--reasoning": {&cfg.ReasoningEffort, "--reasoning"},
+		"-l":          {&cfg.LogDir, "--log"},
+		"--log":       {&cfg.LogDir, "--log"},
 	}
 
 	for i := 0; i < len(args); i++ {
@@ -1477,6 +1616,21 @@ func main() {
 		}
 	}()
 
+	// With -l/--log, open <dir>/<start-time>.log using the starting time and
+	// mirror everything the terminal prints into it. A failure to open the log
+	// is fatal, consistent with the other option errors.
+	var log *sessionLog
+	if cfg.LogDir != "" {
+		var err error
+		log, err = newSessionLog(cfg.LogDir, time.Now())
+		if err != nil {
+			fmt.Printf("Error: cannot open log in %q: %v\n", cfg.LogDir, err)
+			os.Exit(1)
+		}
+		defer log.Close()
+		activeLog = log
+	}
+
 	fmt.Println("\033[1mLLM Terminal Bootstrap (Ctrl-C to interrupt or exit)\033[0m")
 	fmt.Printf("\033[1mURL:\033[0m %s/chat/completions\n", cfg.BaseURL)
 	if cfg.Model != "" {
@@ -1484,6 +1638,17 @@ func main() {
 	}
 	if cfg.ReasoningEffort != "" {
 		fmt.Printf("\033[1mEffort:\033[0m %s\n", cfg.ReasoningEffort)
+	}
+	if log != nil {
+		log.logPlain("LLM Terminal Bootstrap (Ctrl-C to interrupt or exit)")
+		log.logPlain("URL: " + cfg.BaseURL + "/chat/completions")
+		if cfg.Model != "" {
+			log.logPlain("Model: " + cfg.Model)
+		}
+		if cfg.ReasoningEffort != "" {
+			log.logPlain("Effort: " + cfg.ReasoningEffort)
+		}
+		log.flush()
 	}
 
 	var messages []Message
@@ -1566,6 +1731,10 @@ func main() {
 
 		messages = append(messages, Message{Role: "user", Content: userPrompt})
 		writesAllowed := hasGoCommand(userPrompt)
+		if log != nil {
+			log.logPlain("$ " + userPrompt)
+			log.flush()
+		}
 		fmt.Println()
 
 		// Each turn gets its own context so one Ctrl-C ends exactly one turn.
@@ -1583,13 +1752,19 @@ func main() {
 		}()
 
 		for i := 0; ; i++ {
-			assistantMsg, err := callEndpointStreaming(turnCtx, cfg, messages, i == 0)
+			assistantMsg, err := callEndpointStreaming(turnCtx, cfg, messages, i == 0, log)
 
 			if err != nil {
 				if turnCtx.Err() != nil {
 					fmt.Println("\nInterrupted! Returning to prompt...")
+					if log != nil {
+						log.logPlain("Interrupted! Returning to prompt...")
+					}
 				} else {
 					fmt.Printf("\033[31m[Error]\033[0m Request failed: %v\n", err)
+					if log != nil {
+						log.logPlain("[Error] Request failed: " + err.Error())
+					}
 				}
 				break
 			}
@@ -1620,6 +1795,9 @@ func main() {
 					result, err = executeTool(tc, writesAllowed)
 					if err != nil {
 						fmt.Printf("\033[31m[Error]\033[0m %s: %v\n", tc.Function.Name, err)
+						if log != nil {
+							log.logPlain(fmt.Sprintf("[Error] %s: %v", tc.Function.Name, err))
+						}
 						result = fmt.Sprintf("Error: %v", err)
 					}
 				}
