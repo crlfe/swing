@@ -14,6 +14,6 @@ pub mod frame;
 pub mod msg;
 pub mod transport;
 
-pub use frame::{Frame, Stream, FIXED_HEADER_LEN, MAGIC, MAX_FRAME_SIZE, VERSION};
+pub use frame::{Frame, Stream, FIXED_HEADER_LEN, MAGIC, MAX_BODY, MAX_FRAME_SIZE, VERSION};
 pub use msg::{EntryKind, FsEntry, Msg};
-pub use transport::{Conn, RecvFrame};
+pub use transport::{Conn, Duplex, RecvFrame};

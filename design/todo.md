@@ -51,16 +51,17 @@ API, no daemon, and no token auth in this step.
 2. **Split out `swing-guest`** behind the §7 frame format over one `socketpair()`;
    tools become remote exec/fs. Keep the framed server↔guest boundary from day 1 of the
    *real* spike — collapsing it into one process makes the later virtio-serial swap a
-   rewrite, not a config change. **Done.** `swing-guest` is now a coordinator that forks
-   `swing-guest container` children (via `Command` + a `socketpair` as the child's
+   rewrite, not a config change. **Done.** `swing-guest` is now a coordinator that spawns
+   container children (via `Command` + a `socketpair` as the child's
    stdin/stdout) and routes exec/fs frames by container id.
-3. **Add `unshare`** around the work directory (T4). Defer it: run exec/fs against a
+3. **Add the sandbox** around the work directory (T4). Defer it: run exec/fs against a
    plain directory first. This also sidesteps whether unprivileged user namespaces work
    on the dev box, and the fact that distinct-uid allocation is not possible
    unprivileged. **In progress.** Unprivileged user namespaces confirmed on the dev box.
-   A `unshare`/mount/`pivot_root`/cap-drop recipe is implemented in the container child
-   (`swing-guest/src/sandbox.rs`), **opt-in** via `SWING_SANDBOX=1` and **not yet
-   verified on-box** — see T4 for what remains.
+   The sandbox is now **bubblewrap** (`bwrap … swing-guest container`, child as PID 1;
+   flags built in `swing-guest/src/sandbox.rs`), **always on** (the `SWING_SANDBOX`
+   switch has been removed) and **not yet verified to contain** — see T4 for what
+   remains.
 
 **Explicitly deferred out of this spike** (do not design them now): webapp / HTTP API /
 token auth (OQ-13, T23); daemon, pidfile, login-start, crash semantics (OQ-15, T8b);
@@ -131,6 +132,11 @@ Decide a naive rule for A1, even though real management is B3:
 Decide:
 - **Decided (D-42): serde (`serde_json`) header, max frame size 4 KiB** (provisional;
   large payloads chunked on the bulk stream). Field set and offsets per §7.
+- **Frame budget for header-carried data.** `MAX_BODY` reserves 256 bytes for the JSON
+  header, which is fine for `exec_output` and `fs_read`, but `fs_result` carries
+  `entries` *in the header*: a directory of roughly 80 entries overflows 4 KiB and the
+  call fails outright. Decide list truncation plus a `truncated` flag, or move
+  listings to the bulk stream (see the `fs.rs` TODO).
 - Backpressure: what happens when the channel fills while an `exec` is streaming.
 - Define the message set in `schema.toml` so both sides and `swing trace` share one
   definition.
@@ -151,8 +157,9 @@ a configuration change.
 
 ### T4. Container setup, minimal  *(OQ-7)*
 Decide for A1:
-- Exact `unshare` flags and ordering; whether we use `pivot_root` or just a tmpfs
-  root with bind mounts.
+- ~~Exact `unshare` flags and ordering; `pivot_root` vs a tmpfs root~~ — resolved:
+  bubblewrap owns the namespaces/mount/pivot (D-22, OQ-7); we only choose the bind
+  set.
 - Whether user namespaces are used (host dependency; NixOS and most distros allow
   them, but confirm on the dev machines).
 - Work directory layout on the host for the PoC (`state/workspaces/<ticket>/`).
@@ -161,29 +168,37 @@ Decide for A1:
   exercised early. Note this code may be replaced by `systemd-run --scope` in the guest
   (D-36), so keep it isolated in one module.
 
-**Spike status (implemented, opt-in, unverified).** The coordinator forks
-`swing-guest container` children; the child runs the recipe in
-`swing-guest/src/sandbox.rs` when launched with `--sandbox` (coordinator flag
-`SWING_SANDBOX=1`). Implemented: `unshare` of user+mount+pid+net+ipc+uts;
-uid/gid mapping (`deny` setgroups, map container root → caller uid); private
-mounts; a tmpfs new root with a read-only toolchain bind set
-(`SWING_SANDBOX_BINDS`, default `/bin:/usr:/lib:/lib64:/etc`), a read-write
-`/work` bind, `proc`, tmpfs `/tmp`, and a minimal `/dev` (null/zero/urandom/tty);
-`pivot_root`; `PR_SET_NO_NEW_PRIVS` + capability bounding-set drop. Unprivileged
-user namespaces confirmed on the dev box.
+**Spike status (implemented, always on, unverified).** The coordinator spawns
+`bwrap … swing-guest container` children; bubblewrap builds the sandbox and runs the
+child as PID 1 of its own PID namespace before it reads its first frame — there is no
+`--sandbox` flag and no `SWING_SANDBOX` env var, and a child whose sandbox fails to
+set up dies instead of serving unsandboxed. bubblewrap flags (built in
+`swing-guest/src/sandbox.rs`): `--unshare-user --unshare-all` (user+mount+pid+net+ipc+uts),
+uid/gid map to the caller uid, `--disable-userns`, `--die-with-parent`, a
+tmpfs root with a read-only toolchain bind set (`SWING_SANDBOX_BINDS`, default
+`/bin:/usr:/lib:/lib64:/etc`), a read-write `/work` bind, `proc`, tmpfs `/tmp`, and
+`--dev`; bubblewrap's own default capability drop covers the payload's capability
+set. The child keeps only `PR_SET_NO_NEW_PRIVS` + `PR_SET_PDEATHSIG`. bubblewrap
+is now a runtime dependency (override with `SWING_BWRAP`). Unprivileged user
+namespaces confirmed on the dev box; bubblewrap presence to be confirmed on the test
+box.
 
 **Still open for T4 (needs on-box iteration):**
-- Verify the recipe actually runs and contains (T14 canary test) — currently
-  unverified; left opt-in so the working spike is unaffected.
-- Clear **effective/permitted** capabilities via `capset`; bounding-set drop alone
-  is not sufficient.
+- Verify the recipe *contains* (T14 canary test). The path-protection tests now
+  run against a sandboxed container and show the shell cannot reach a host
+  canary, which proves the recipe *runs*; the direct boundary probes
+  (mountinfo, `/proc/net/dev`, `NoNewPrivs`, `CapBnd`, pid 1) are still to be
+  written.
+- Confirm bubblewrap's default capability drop actually clears the payload's
+  **effective/permitted** sets (the `CapBnd`/`CapEff` probe above is how), rather
+  than assuming it.
 - The read-only bind set is a host-dependent stopgap — the real toolchain supply is
   T15/OQ-4.
-- cgroup `memory.max` / `pids.max` (§11) not yet wired.
+- cgroup `memory.max` / `pids.max` (§11) not yet wired. Note `--unshare-all` puts
+  the container in its own cgroup namespace on newer bubblewrap; check what the
+  coordinator can see before wiring limits (D-25).
 - Per-container distinct uid inside the userns (host-side distinct uid is a Track B
   / egress concern).
-- `pivot_root` vs tmpfs-root-with-binds is currently `pivot_root`; revisit if it
-  fights anything.
 
 ### T5. Terminal conditions and iteration policy  *(OQ-5)*
 Decide:

@@ -7,7 +7,9 @@
 //! channel (revised D-27); the server owns the guest's lifetime.
 //!
 //! TODO (deferred): daemon + pidfile + crash semantics (T8b), ticket DB (T8),
-//! scheduler (T6), metering (T28), `unshare` sandbox (T4).
+//! scheduler (T6), metering (T28). The container sandbox is always on (T4); what
+//! is still open is proving it contains (T14) and closing the tool-error
+//! recovery gap in `tools.rs` (T1).
 
 mod config;
 mod guest;
@@ -32,11 +34,11 @@ fn main() -> Result<()> {
     println!("swing-server (spike)");
     println!("  model: {}", cfg.model.as_deref().unwrap_or("(unset)"));
     println!("  guest: {} (spawned)", cfg.guest_bin);
-    println!("  work dir: {}", cfg.work_dir);
-    println!("  sandbox: {}", cfg.sandbox);
+    println!("  work dir: {} (mounted at /work in the container)", cfg.work_dir);
+    println!("  sandbox: always on");
     println!("Type a message and press enter. ':quit' to exit.\n");
 
-    let mut guest = guest::GuestClient::spawn(&cfg.guest_bin, &cfg.work_dir, cfg.sandbox)?;
+    let mut guest = guest::GuestClient::spawn(&cfg.guest_bin, &cfg.work_dir)?;
     let provider = provider::Provider::new(&cfg);
     let session = session::Session::new(provider);
 

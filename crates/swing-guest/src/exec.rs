@@ -14,12 +14,7 @@ use std::process::{Command, Stdio};
 use std::time::Instant;
 
 use anyhow::Result;
-use swing_proto::{Conn, Msg, Stream, MAX_FRAME_SIZE};
-
-/// Body budget so the whole frame (fixed header + JSON header + body) stays
-/// within MAX_FRAME_SIZE. The JSON header for exec_output is small; 256 bytes
-/// of slack is generous.
-const MAX_BODY: usize = MAX_FRAME_SIZE - 256;
+use swing_proto::{Conn, Msg, Stream, MAX_BODY};
 
 pub fn handle_exec<S: Read + Write>(
     conn: &mut Conn<S>,

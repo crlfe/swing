@@ -6,10 +6,11 @@
 //! The coordinator speaks the framed protocol to `swing-server` over its control
 //! channel — a `socketpair` inherited from the server that spawns it (the prototype
 //! form; a private local channel — socketpair/pipe — in production, revised D-27) —
-//! and forks `swing-guest container` children (via `std::process::Command`,
-//! never `fork()` from an async runtime), routing exec/fs frames to the child
-//! for that container id. The child optionally sandboxes itself (unshare/mount/
-//! cap-drop) and then serves exec/fs within that sandbox.
+//! and spawns `bwrap … swing-guest container` children (via
+//! `std::process::Command`, never `fork()` from an async runtime), routing
+//! exec/fs frames to the child for that container id. bubblewrap sandboxes each
+//! child and runs it as PID 1 of its own PID namespace before it reads its first
+//! frame.
 //!
 //! The framed server<->guest boundary is real from day 1, so the later
 //! virtio-serial swap is a config change, not a rewrite.

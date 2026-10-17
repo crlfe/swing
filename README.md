@@ -30,8 +30,8 @@ Real (the spike's point):
 
 Deferred (explicitly out of this spike — see todo.md):
 
-- `unshare` / container fork / cgroups (T4): exec/fs run against a **plain work
-  directory**.
+- Cgroups (T4): the container sandbox is bubblewrap, but cgroup `memory.max` /
+  `pids.max` fault isolation is deferred.
 - Ticket DB, daemon, pidfile, crash semantics (T8, T8b).
 - Scheduler, DAG, parking, `report`/`park`/`open_ticket` tools (T5, T6).
 - Cancellation, timeouts, bulk-stream chunking for large payloads (T3).
@@ -56,9 +56,9 @@ crates/
     src/guest.rs           # client to swing-guest over the control channel
   swing-guest/             # guest: coordinator + container children
     src/main.rs            # arg dispatch: coordinator vs `container` child
-    src/coordinator.rs     # inherited socketpair channel, handshake, fork + route by id
-    src/container.rs       # child: optional sandbox, then serve exec/fs frames
-    src/sandbox.rs         # opt-in unshare/mount/pivot_root/cap-drop (T4)
+    src/coordinator.rs     # inherited socketpair channel, handshake, spawn bwrap + route by id
+    src/container.rs       # child: PID 1 under bubblewrap; payload hardening, then serve
+    src/sandbox.rs         # bubblewrap flags + payload hardening (T4)
     src/exec.rs            # sh -c, stream stdout/stderr, exec_exit
     src/fs.rs              # read/write/list against the work root
 ```
@@ -72,8 +72,8 @@ cargo build
 ## Run
 
 Run the server. It **spawns `swing-guest` as a child** and hands it one end of a
-`socketpair` as its control channel (revised D-27); the coordinator in turn forks a
-`swing-guest container` child per container id.
+`socketpair` as its control channel (revised D-27); the coordinator in turn spawns a
+`bwrap … swing-guest container` child per container id.
 
 ```sh
 # Required: the provider endpoint. There is no default, so a missing base URL
@@ -90,17 +90,33 @@ export OPENAI_API_KEY=sk-...
 cargo run -p swing-server
 ```
 
-Opt-in sandbox (unshare/mount/cap-drop in the container child). NOT yet verified
-on-box — see todo.md T4. Toolchain bind set via `SWING_SANDBOX_BINDS`:
+The container sandbox is **bubblewrap**: the coordinator runs `bwrap … swing-guest
+container` and the child runs as PID 1 inside it. It is **always on** — there is no
+`SWING_SANDBOX` switch, and a container whose sandbox fails to set up dies rather
+than serving unsandboxed. It is *not yet verified to contain* — see todo.md T4/T14.
+Knobs:
 
-```sh
-SWING_SANDBOX=1 cargo run -p swing-server
-```
+- `SWING_SANDBOX_BINDS` — colon-separated absolute host paths bound read-only as
+  the toolchain (default `/bin:/usr:/lib:/lib64:/etc`).
+- `SWING_BWRAP` — the bubblewrap binary to run (default `bwrap`).
 
 `swing-guest` is never run standalone — the server always spawns it.
 
 Type a message; the model may call tools (which run in the guest's work dir) and
 the turn ends when it replies with plain text. `:quit` exits.
+
+## Tests
+
+```sh
+cargo test                                   # whole workspace
+cargo test -p swing-guest                    # path policy + control-channel tests
+```
+
+The guest tests spawn the real `swing-guest` binary and drive frames at it, so
+they need bubblewrap installed and unprivileged user namespaces — the container is
+always sandboxed. If bubblewrap is missing or your box blocks user namespaces
+(AppArmor does on some distros) they fail with bubblewrap's error rather than
+skipping quietly.
 
 ## Notes on the protocol
 

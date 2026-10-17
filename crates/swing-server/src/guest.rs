@@ -40,14 +40,14 @@ pub struct FsReadResult {
 
 impl GuestClient {
     /// Spawn `swing-guest` and wire one end of a `socketpair` to its stdin/stdout.
-    pub fn spawn(guest_bin: &str, work_dir: &str, sandbox: bool) -> Result<GuestClient> {
+    ///
+    /// There is no sandbox option to pass: the guest sandboxes every container
+    /// child unconditionally (T4).
+    pub fn spawn(guest_bin: &str, work_dir: &str) -> Result<GuestClient> {
         let (server_end, guest_end) = UnixStream::pair()?;
 
         let mut cmd = Command::new(guest_bin);
         cmd.arg("--work-dir").arg(work_dir);
-        if sandbox {
-            cmd.arg("--sandbox");
-        }
         // Hand the guest one end of the socketpair as its stdin+stdout (same
         // socket, two fds) — UnixStream -> OwnedFd -> File -> Stdio.
         cmd.stdin(Stdio::from(File::from(OwnedFd::from(guest_end.try_clone()?))));

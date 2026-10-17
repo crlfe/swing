@@ -24,6 +24,15 @@ pub const FIXED_HEADER_LEN: usize = 29;
 /// provisional). Large payloads are chunked across frames on the bulk stream.
 pub const MAX_FRAME_SIZE: usize = 4096;
 
+/// Body budget so the whole frame (fixed header + JSON header + body) stays
+/// within MAX_FRAME_SIZE. Shared so every crate uses the same accounting.
+///
+/// The 256 bytes of slack assumes a small JSON header. That holds for
+/// `exec_output` and for `fs_read`'s `fs_result`; it does *not* hold for a
+/// `fs_result` carrying a large `entries` array, whose entries grow the header
+/// itself (see the `fs_list` TODO in `swing-guest/src/fs.rs`, and todo.md T3).
+pub const MAX_BODY: usize = MAX_FRAME_SIZE - 256;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Stream {

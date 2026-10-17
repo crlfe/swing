@@ -124,7 +124,7 @@ direction = "guest_to_server"
 stream = "control"
 fields = ["ok", "error?", "entries", "total?", "truncated"]
 body = "read bytes (for fs_read); empty otherwise"
-notes = "error is a model-actionable code (no_such_file, bad_path, payload_too_large), not a raw errno."
+notes = "error is a model-actionable code, never a raw errno: bad_path, no_such_file, permission_denied, is_a_directory, not_a_directory, already_exists, no_space, payload_too_large, fs_failed."
 
 # ---- generic ----
 [[message]]
@@ -132,3 +132,4 @@ name = "error"
 direction = "guest_to_server"
 stream = "control"
 fields = ["code", "message"]
+notes = "code is a stable code the server can log: unsupported, call_failed, container_died."

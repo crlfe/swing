@@ -4,6 +4,9 @@
 //! `OPENAI_BASE_URL` is required; `OPENAI_MODEL` and `OPENAI_API_KEY` are
 //! optional (the request omits the `model` field / `Authorization` header when
 //! they are unset).
+//!
+//! The container sandbox is deliberately not a setting: the container child
+//! always sandboxes itself (T4).
 
 use anyhow::{anyhow, bail, Result};
 
@@ -15,10 +18,9 @@ pub struct Config {
     /// Path to the `swing-guest` binary the server spawns as a child. The server
     /// hands it one end of a `socketpair` as its control channel (revised D-27).
     pub guest_bin: String,
-    /// Host work directory handed to the guest as the container workspace.
+    /// Host work directory handed to the guest as the container workspace. The
+    /// container bind-mounts it read-write at `/work` inside its own root.
     pub work_dir: String,
-    /// Opt-in sandbox in the container child (T4).
-    pub sandbox: bool,
 }
 
 /// Unset or empty counts as absent.
@@ -55,7 +57,6 @@ impl Config {
             Some(d) => d,
             None => std::env::current_dir()?.to_string_lossy().into_owned(),
         };
-        let sandbox = std::env::var("SWING_SANDBOX").map(|v| v == "1").unwrap_or(false);
 
         Ok(Config {
             base_url,
@@ -63,7 +64,6 @@ impl Config {
             api_key,
             guest_bin,
             work_dir,
-            sandbox,
         })
     }
 }

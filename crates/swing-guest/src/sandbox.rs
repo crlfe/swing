@@ -1,178 +1,134 @@
-//! Container sandbox setup (design.md §11, T4). OPT-IN and NOT yet verified on
-//! a real box — enable with `SWING_SANDBOX=1` on the coordinator.
+//! Container sandbox via bubblewrap (design.md §11, T4; OQ-7 resolved to
+//! bubblewrap). The coordinator runs `bwrap <flags> /swing-guest container
+//! --id N`, so the container child runs as **PID 1** inside the bubblewrap
+//! sandbox and the host-side `unshare`/`pivot_root`/cap-drop recipe is gone —
+//! bubblewrap owns those syscalls. `container.rs` keeps only the two payload-side
+//! prctls bubblewrap does not cover (`harden_payload`).
 //!
-//! Recipe (bubblewrap-style, but our own syscalls per D-22):
-//!   1. unshare user + mount + pid + net + ipc + uts namespaces.
-//!   2. map uid/gid (deny setgroups, map container root -> caller uid).
-//!   3. make all mounts private (required before pivot_root).
-//!   4. build a tmpfs new root: bind-mount a curated toolchain read-only,
-//!      bind-mount the workspace read-write at /work, mount proc + tmpfs /tmp,
-//!      bind-mount a minimal /dev.
-//!   5. pivot_root into it.
-//!   6. PR_SET_NO_NEW_PRIVS + drop the capability bounding set.
+//! The curated bind set is still ours (the design wants a curated root, not the
+//! whole host read-only): a tmpfs `/` with read-only toolchain binds, a
+//! read-write `/work`, `proc`, tmpfs `/tmp` and a minimal `--dev`. Configure the
+//! toolchain set with `SWING_SANDBOX_BINDS` (colon-separated absolute host
+//! paths). A source absent on this host is skipped with a note; the payload
+//! binary itself is bound in at `/swing-guest` so it is reachable once bubblewrap
+//! has replaced the root.
 //!
-//! TODO (needs on-box iteration — T4 / T14 / T15):
-//!   - The exact read-only bind set. Toolchain supply is the open T15/OQ-4
-//!     question; here we bind-mount host dirs as a stopgap. Configure with
-//!     `SWING_SANDBOX_BINDS` (colon-separated absolute paths).
-//!   - Clear effective/permitted capabilities via `capset`. Dropping the
-//!     bounding set alone is NOT sufficient.
-//!   - cgroup `memory.max` / `pids.max` (§11).
-//!   - A containment canary test proving nothing escapes (T14).
+//! Still NOT verified on a real box (T14). cgroup `memory.max`/`pids.max` (§11,
+//! D-25) remain the authoritative teardown / fault-isolation backstop and are
+//! still a TODO. Future backends (systemd-nspawn / `systemd-run --scope` per
+//! OQ-10, nixos-container per B8) replace this module wholesale.
 
-use std::ffi::CString;
-use std::fs::{self, OpenOptions};
 use std::io;
+use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
-// mount(2) flags (defined locally so we do not depend on libc exposing them).
-const MS_RDONLY: libc::c_ulong = 1;
-const MS_NOSUID: libc::c_ulong = 2;
-const MS_NODEV: libc::c_ulong = 4;
-const MS_NOEXEC: libc::c_ulong = 8;
-const MS_REMOUNT: libc::c_ulong = 20;
-const MS_BIND: libc::c_ulong = 4096;
-const MS_REC: libc::c_ulong = 16384;
-const MS_PRIVATE: libc::c_ulong = 1 << 18;
-const MNT_DETACH: libc::c_int = 2;
-
-// clone(2) namespace flags for unshare(2).
-const CLONE_NEWNS: libc::c_int = 0x0002_0000;
-const CLONE_NEWUSER: libc::c_int = 0x1000_0000;
-const CLONE_NEWIPC: libc::c_int = 0x0800_0000;
-const CLONE_NEWUTS: libc::c_int = 0x0400_0000;
-const CLONE_NEWPID: libc::c_int = 0x2000_0000;
-const CLONE_NEWNET: libc::c_int = 0x4000_0000;
-
-// prctl(2) options.
+// prctl(2) options used by the payload (bubblewrap does not set these).
 const PR_SET_NO_NEW_PRIVS: libc::c_int = 38;
-const PR_CAPBSET_DROP: libc::c_int = 24;
+const PR_SET_PDEATHSIG: libc::c_int = 1;
 
-fn cstr(s: &str) -> Result<CString> {
-    CString::new(s).map_err(|e| anyhow!("invalid path {s:?}: {e}"))
-}
+/// Path the payload binary is bound to *inside* the sandbox, and the path the
+/// payload is exec'd from. A shallow top-level path so its parent (`/`, the
+/// tmpfs root) always exists — no deep bind-destination directories to create.
+const PAYLOAD_PATH: &str = "/swing-guest";
 
-fn mount(src: &str, dst: &str, fstype: &str, flags: libc::c_ulong, data: Option<&str>) -> Result<()> {
-    let c_src = cstr(src)?;
-    let c_dst = cstr(dst)?;
-    let c_fs = cstr(fstype)?;
-    let c_data = match data {
-        Some(d) => Some(cstr(d)?),
-        None => None,
-    };
-    let data_ptr: *const libc::c_void = c_data
-        .as_ref()
-        .map(|c| c.as_ptr() as *const libc::c_void)
-        .unwrap_or(std::ptr::null());
-    let ret = unsafe { libc::mount(c_src.as_ptr(), c_dst.as_ptr(), c_fs.as_ptr(), flags, data_ptr) };
-    if ret != 0 {
-        return Err(io::Error::last_os_error())
-            .with_context(|| format!("mount {src:?} -> {dst:?} ({fstype})"));
-    }
-    Ok(())
-}
+/// Build the bubblewrap argument vector for one container: every bwrap flag,
+/// followed by the payload command (`/swing-guest container --id <id>`). The
+/// caller runs `Command::new(bwrap).args(bwrap_args(..))`.
+///
+/// `exe` is the host `swing-guest` binary; it is bound read-only at
+/// `PAYLOAD_PATH` so the payload is reachable after the root is replaced. Its
+/// dynamic loader / libc come from the toolchain bind set — for a Nix-built
+/// binary the loader lives in the Nix store, which is the open T15/OQ-4 toolchain
+/// supply question, not something these default binds cover.
+pub fn bwrap_args(work_dir: &str, exe: &Path, id: u32) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
 
-fn bind(src: &str, dst: &str, read_only: bool) -> Result<()> {
-    mount(src, dst, "", MS_BIND, None)?;
-    if read_only {
-        mount(src, dst, "", MS_BIND | MS_REMOUNT | MS_RDONLY, None)?;
-    }
-    Ok(())
-}
+    // Namespaces. bubblewrap always unshares mount; --unshare-all adds pid,
+    // net, ipc, uts (and, on newer bubblewrap, cgroup — worth remembering when
+    // the cgroup limits of D-25 land). The user namespace is required for the
+    // uid/gid map, unprivileged operation and --disable-userns, and
+    // --unshare-all does not imply it on every supported version, so set it
+    // explicitly. With --unshare-pid the payload is PID 1 of the new PID
+    // namespace, so the mounted /proc is scoped to it and the whole namespace
+    // tears down when it exits.
+    args.push("--unshare-user".into());
+    args.push("--unshare-all".into());
+    // With the user namespace unshared, bubblewrap maps the caller uid/gid to
+    // root inside, denies setgroups, and drops the payload's capability set —
+    // all defaults, so no flags are needed for them here.
+    // Kill the sandbox if the coordinator (bubblewrap's parent) dies.
+    args.push("--die-with-parent".into());
+    // Defend against the payload escaping via a nested user namespace
+    // (bubblewrap >= 0.6).
+    args.push("--disable-userns".into());
 
-pub fn setup(id: u32, work_dir: &str) -> Result<()> {
-    let uid = unsafe { libc::getuid() };
-    let gid = unsafe { libc::getgid() };
+    // A fresh root: tmpfs, then the curated binds. (Deliberately *not*
+    // `--ro-bind / /`: the design wants a curated bind set, not the whole host
+    // visible to the container.)
+    args.push("--tmpfs".into());
+    args.push("/".into());
 
-    // 1. Namespaces.
-    let ns = CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWUTS;
-    if unsafe { libc::unshare(ns) } != 0 {
-        return Err(io::Error::last_os_error()).context("unshare namespaces");
-    }
-
-    // 2. uid/gid map. `deny` setgroups must precede gid_map.
-    fs::write("/proc/self/setgroups", b"deny").context("write /proc/self/setgroups")?;
-    fs::write("/proc/self/gid_map", format!("0 {gid} 1").as_bytes())
-        .with_context(|| format!("write gid_map 0 {gid} 1"))?;
-    fs::write("/proc/self/uid_map", format!("0 {uid} 1").as_bytes())
-        .with_context(|| format!("write uid_map 0 {uid} 1"))?;
-
-    // 3. Private mounts (required before pivot_root).
-    mount("", "/", "", MS_REC | MS_PRIVATE, None).context("make mounts private")?;
-
-    // 4. New root on a tmpfs.
-    let newroot = format!("/tmp/swing-root-{id}");
-    fs::create_dir_all(&newroot).with_context(|| format!("create {newroot}"))?;
-    mount("tmpfs", &newroot, "tmpfs", MS_NOSUID | MS_NODEV, None)
-        .with_context(|| format!("mount tmpfs at {newroot}"))?;
-
-    for d in ["dev", "proc", "tmp", "work", "old", "bin", "usr", "lib", "lib64", "etc"] {
-        fs::create_dir_all(format!("{newroot}/{d}"))?;
-    }
-
-    // Toolchain bind set (stopgap for T15). Configurable.
+    // Toolchain bind set (the open T15/OQ-4 question; host dirs as a stopgap).
+    // Absent on this host -> skip with a note; present but failing is fatal at
+    // spawn time.
     let binds =
         std::env::var("SWING_SANDBOX_BINDS").unwrap_or_else(|_| "/bin:/usr:/lib:/lib64:/etc".into());
     for b in binds.split(':').filter(|s| !s.is_empty()) {
-        let dst = format!("{newroot}{b}");
-        fs::create_dir_all(&dst).ok();
-        bind(b, &dst, true).with_context(|| format!("bind toolchain {b} (read-only)"))?;
+        if !Path::new(b).exists() {
+            eprintln!("sandbox: skipping bind {b} (not present on this host)");
+            continue;
+        }
+        args.push("--ro-bind".into());
+        args.push(b.to_string());
+        args.push(b.to_string());
     }
 
-    // Workspace read-write at /work.
-    bind(work_dir, &format!("{newroot}/work"), false).context("bind /work (read-write)")?;
+    // The payload binary must be reachable after the root is replaced.
+    args.push("--ro-bind".into());
+    args.push(exe.to_string_lossy().into_owned());
+    args.push(PAYLOAD_PATH.into());
 
-    // proc + tmp.
-    mount(
-        "proc",
-        &format!("{newroot}/proc"),
-        "proc",
-        MS_NOSUID | MS_NODEV | MS_NOEXEC,
-        None,
-    )
-    .context("mount /proc")?;
-    mount("tmpfs", &format!("{newroot}/tmp"), "tmpfs", MS_NOSUID | MS_NODEV, None)
-        .context("mount /tmp")?;
+    // Workspace read-write at /work, plus proc, a minimal /dev and tmpfs /tmp.
+    args.push("--bind".into());
+    args.push(work_dir.into());
+    args.push("/work".into());
+    args.push("--proc".into());
+    args.push("/proc".into());
+    args.push("--dev".into());
+    args.push("/dev".into());
+    args.push("--tmpfs".into());
+    args.push("/tmp".into());
 
-    // Minimal /dev by bind-mounting host device nodes onto placeholder files.
-    for dev in ["null", "zero", "urandom", "tty"] {
-        let dst = format!("{newroot}/dev/{dev}");
-        OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(&dst)
-            .with_context(|| format!("create {dst}"))?;
-        bind(&format!("/dev/{dev}"), &dst, false).with_context(|| format!("bind /dev/{dev}"))?;
-    }
+    // Start the payload in the workspace. bubblewrap stops option parsing at the
+    // first non-option argument (`/swing-guest`), so the payload's own `--id`
+    // reaches it verbatim.
+    args.push("--chdir".into());
+    args.push("/work".into());
+    args.push(PAYLOAD_PATH.into());
+    args.push("container".into());
+    args.push("--id".into());
+    args.push(id.to_string());
 
-    // 5. pivot_root.
-    std::env::set_current_dir(&newroot).with_context(|| format!("chdir {newroot}"))?;
-    let ret = unsafe {
-        libc::syscall(
-            libc::SYS_pivot_root,
-            ".".as_ptr() as *const libc::c_char,
-            "old".as_ptr() as *const libc::c_char,
-        )
-    };
-    if ret != 0 {
-        return Err(io::Error::last_os_error()).context("pivot_root");
-    }
-    std::env::set_current_dir("/").context("chdir /")?;
-    let old = cstr("/old")?;
-    unsafe { libc::umount2(old.as_ptr(), MNT_DETACH) };
-    fs::remove_dir("/old").ok();
+    args
+}
 
-    // 6. no_new_privs + drop the capability bounding set.
+/// Payload-side hardening bubblewrap does not provide.
+///
+/// - `PR_SET_NO_NEW_PRIVS`: no privilege escalation via execve (setuid, etc.).
+/// - `PR_SET_PDEATHSIG(SIGKILL)`: this process is PID 1 of its PID namespace and
+///   its parent is bubblewrap. When the coordinator `kill()`s its `Child`
+///   (bubblewrap), the parent-death signal kills this PID 1, and the kernel then
+///   tears down the whole PID namespace — reaping the `sh` workload and any
+///   orphans. (`--die-with-parent` covers the other direction: the coordinator
+///   dying without an explicit kill.) The authoritative backstop for a hung
+///   payload is a cgroup kill (§11 / D-25), still a TODO.
+pub fn harden_payload() -> Result<()> {
     if unsafe { libc::prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
         return Err(io::Error::last_os_error()).context("PR_SET_NO_NEW_PRIVS");
     }
-    for cap in 0..=40 {
-        // Ignore failures for capabilities absent on this kernel.
-        unsafe { libc::prctl(PR_CAPBSET_DROP, cap as libc::c_ulong, 0, 0, 0) };
+    if unsafe { libc::prctl(PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) } != 0 {
+        return Err(io::Error::last_os_error()).context("PR_SET_PDEATHSIG");
     }
-    // TODO: clear effective/permitted caps via capset; bounding-set drop alone
-    // is not sufficient. Needs on-box verification (T14).
-
     Ok(())
 }

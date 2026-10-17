@@ -77,12 +77,12 @@ HOST                                                   GUEST (the VM)
 ┌───────────────────────────────┐                      ┌─────────────────────────┐
 │ swing-server                  │                      │ swing-guest coordinator │
 │  - owns tickets (host DB)     │   virtio-serial      │                         │
-│  - owns QEMU child            │◄════════════════════►│  - forks container      │
+│  - owns QEMU child            │◄════════════════════►│  - spawns container     │
 │  - LLM sessions + provider    │   binary frames      │    children             │
 │  - tool dispatch              │   (fd / pipe)        │  - exec/fs primitives   │
 │  - scheduler                  │                      │  - workspace mgmt       │
 │  - localhost HTTP API+webapp  │                      └───┬─────────┬───────────┘
-│  - network tools (fetch, etc) │                          │ forks   │
+│  - network tools (fetch, etc) │                          │ spawns  │
 └───────────┬───────────────────┘                          ▼         ▼
             │ spawns                                ┌──────────┐ ┌──────────┐
      qemu-system-x86_64                             │container │ │container │
@@ -126,16 +126,17 @@ Built for the host platform. Rust.
 One executable with two roles:
 
 - **coordinator** — singleton inside the VM. Speaks the wire protocol to
-  `swing-server`. Forks and supervises container children.
-- **container** — the forked child, which `unshare`s itself into a sandbox and then
-  serves exec/filesystem requests for that container.
+  `swing-server`. Spawns and supervises container children.
+- **container** — the sandboxed child, run by bubblewrap as PID 1 inside a
+  sandbox, which then serves exec/filesystem requests for that container.
 
 Built for Linux amd64 only, always. Ships inside `base.img`.
 
 **Fork safety:** do not `fork()` from an async runtime. The coordinator spawns
-`swing-guest container ...` via `std::process::Command` (posix_spawn/vfork) and the
-*child* performs its own `unshare`/mount/`pivot_root` before exec'ing anything. The
-container child is the security-critical code: keep it small, single-threaded, boring.
+`bwrap … swing-guest container ...` via `std::process::Command` (posix_spawn/vfork);
+bubblewrap performs the `unshare`/mount/`pivot_root` and exec's the child as PID 1 of
+its own PID namespace. The container child is the security-critical code: keep it
+small, single-threaded, boring.
 
 ### 5.3 The VM
 
@@ -544,9 +545,11 @@ not share a design.
 
 ## 11. Containers
 
-**Prototype: `unshare` directly, from `swing-guest container`.** bubblewrap is a
-candidate but is an extra dependency and hides the syscalls we will need to reason
-about anyway. Decide at OQ-7 with measurements.
+**Prototype: bubblewrap (`bwrap`), with `swing-guest container` as PID 1 inside
+it.** The hand-rolled `unshare` recipe was getting hard to audit, so we delegate the
+namespaces/mount/pivot/cap syscalls to bubblewrap (D-22, OQ-7). The curated bind set
+(tmpfs root, read-only toolchain, read-write `/work`, `proc`, tmpfs `/tmp`, minimal
+`/dev`) is still ours, expressed as bubblewrap flags.
 
 What a container gets:
 
@@ -562,14 +565,18 @@ What a container gets:
   exercised early.
 
 **Spike status (Track A).** The coordinator/container split is implemented: the
-coordinator forks `swing-guest container` children (via `Command` + a `socketpair` as
-the child's stdin/stdout) and routes exec/fs frames by container id. The child runs an
-opt-in `unshare` recipe (`unshare` user+mount+pid+net+ipc+uts, uid/gid map, private
-mounts, tmpfs root with a read-only toolchain bind set + read-write `/work` + `proc` +
-tmpfs `/tmp` + minimal `/dev`, `pivot_root`, `PR_SET_NO_NEW_PRIVS` + capability
-bounding-set drop) behind `SWING_SANDBOX=1`. It is **not yet verified on-box**; the
-effective/permitted capability drop (`capset`), cgroups, the real toolchain bind set
-(T15), and a containment canary test (T14) remain open — see `todo.md` T4.
+coordinator spawns `bwrap … swing-guest container` children (via `Command` + a
+`socketpair` as the child's stdin/stdout) and routes exec/fs frames by container id.
+bubblewrap builds the sandbox (`--unshare-user --unshare-all`, uid/gid map,
+`--disable-userns`, `--die-with-parent`, its default capability drop, a tmpfs root
+with a read-only toolchain bind set + read-write `/work` + `proc` + tmpfs `/tmp` +
+`--dev`) and runs the child as **PID 1** of its own PID namespace before it reads
+its first frame; there is no switch
+to turn it off, and a child whose sandbox fails to set up dies rather than serving
+unsandboxed. The child keeps only the two prctls bubblewrap does not cover
+(`PR_SET_NO_NEW_PRIVS`, `PR_SET_PDEATHSIG`). It is **not yet verified to contain**;
+cgroups, the real toolchain bind set (T15), and a containment canary test (T14) remain
+open — see `todo.md` T4.
 
 **cgroups.** Not quotas or fairness — fault isolation. One runaway container that
 exhausts guest memory otherwise kills every other attempt in the VM.
@@ -841,9 +848,9 @@ They run **in parallel** and neither blocks the other.
 
 ### Track A — QEMU-free proof of concept (Linux only)
 
-No QEMU, no Nix, no VM. `swing-server` in the foreground → forks `swing-guest` →
-`swing-guest` forks container children that `unshare` themselves around a work
-directory. Single Rust program.
+No QEMU, no Nix, no VM. `swing-server` in the foreground → spawns `swing-guest` →
+`swing-guest` spawns container children under bubblewrap around a work directory.
+Single Rust program (plus bubblewrap).
 
 **The rule that makes it non-throwaway:** the transport is a byte stream and only
 framed messages cross it. Use a **`socketpair()` between `swing-server` and `swing-guest`**
@@ -883,7 +890,7 @@ the tool surface works well against real models — is answered here, cheaply.
 | A2 | Parking (container kept alive, waiting for input), human comments, resume reusing the same container. |
 | A3 | Ticket DAG: `open_ticket`, blocking, cycle detection, scheduler slots. |
 | B1 | Track B spikes complete; a bootable `base.img` from the flake, **with systemd**, meeting the boot-time target. |
-| B2 | Swap Track A's socketpair for virtio-serial (fd-passing on Unix, named pipe on Windows) and its `unshare` for `base.img` containers. The design is now real. |
+| B2 | Swap Track A's socketpair for virtio-serial (fd-passing on Unix, named pipe on Windows) and its bubblewrap sandbox for `base.img` containers. The design is now real. |
 | B3 | Transcript/context management: summarization, collapsing, pruning. |
 | B4 | Software supply: resolve OQ-4. Explicit, recorded, verified fetch — **not** a tunnel. |
 | B5 | Webapp + HTTP API; hardening; macOS/Windows; single-artifact packaging. |
@@ -891,9 +898,10 @@ the tool surface works well against real models — is answered here, cheaply.
 | B7 | Image distribution: signed manifest, chunked download with resume, delta updates, verify-then-swap, rollback. |
 | B8 | Deferred: VM restart with state, GUI demo transport, nixos-container re-evaluation. |
 
-**Standing constraint:** Track A is a testbed, not a product. `unshare` protects the
-host's files; it is not a kernel boundary, it requires host user namespaces, and it
-does nothing on Windows. The security story is incomplete until Track B lands.
+**Standing constraint:** Track A is a testbed, not a product. The host-side sandbox
+(bubblewrap) protects the host's files; it is not a kernel boundary, it requires host
+user namespaces, and it does nothing on Windows. The security story is incomplete
+until Track B lands.
 
 ## 18. Worked example
 
@@ -934,7 +942,7 @@ environment: { packages: [] }
 | D-2 | QEMU is the security boundary; containers are for reproducibility and fault isolation. |
 | D-3 | Exactly one long-lived VM. Containers come and go; the VM does not (v1). |
 | D-4 | `swing` and `swing-server` are one host-platform binary with CLI and supervisor modes. |
-| D-5 | `swing-guest` is one Linux-amd64 binary: coordinator mode plus forked container children. |
+| D-5 | `swing-guest` is one Linux-amd64 binary: coordinator mode plus bubblewrap-spawned container children. |
 | D-6 | **The model runs in `swing-server`.** No agent executable in containers, no third-party agent software. |
 | D-7 | Containers are remote-controlled via a tool protocol: remote exec + remote filesystem. |
 | D-8 | No network device in the VM; no network setup in containers. |
@@ -951,7 +959,7 @@ environment: { packages: [] }
 | D-19 | Control channel is virtio-serial over a **private local chardev** — an inherited fd (Unix) or a DACL-secured named pipe (Windows) — created by the server and handed to QEMU; QEMU never listens and never opens a network socket. *(revised)* |
 | D-20 | Environment changes restart the container; running containers are never mutated. |
 | D-21 | Server owns all credentials; nothing model-related enters the VM. |
-| D-22 | Prototype containers use `unshare` directly from `swing-guest`. |
+| D-22 | Prototype containers use **bubblewrap** (`bwrap`), with `swing-guest` as PID 1 inside it. |
 | D-23 | Prototype packaging is a `tar.zst` bundle — a prototype convenience, not the shipping plan. |
 | D-24 | Prototype is Linux-only; QEMU invocation and abstractions stay portable. |
 | D-25 | cgroup `memory.max` / `pids.max` as fault isolation, not fairness. |
@@ -1023,7 +1031,11 @@ state may no longer be true).
 
 ### OQ-7 — `unshare` directly vs. bubblewrap vs. nixos-container
 
-Decide with measurements from A1 and B1.
+**Resolved for the prototype: bubblewrap.** The hand-rolled `unshare` recipe was
+getting hard to audit, so the coordinator now runs `bwrap … swing-guest container` and
+the child runs as PID 1 inside it (D-22). The future exploration is unchanged:
+systemd-nspawn / `systemd-run --scope` (OQ-10) and nixos-container (B8) remain the
+candidates to evaluate with measurements from A1 and B1.
 
 ### OQ-8 — Overlay root
 

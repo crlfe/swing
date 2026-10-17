@@ -77,3 +77,36 @@ impl<S: Read + Write> Conn<S> {
         self.io
     }
 }
+
+/// A single `Read + Write` handle over the process's stdin (reads) and stdout
+/// (writes). Both are descriptors for the same end of the `socketpair` the
+/// parent created, so this is a full-duplex framed channel without needing an
+/// unsafe fd dup.
+pub struct Duplex {
+    r: io::Stdin,
+    w: io::Stdout,
+}
+
+impl Default for Duplex {
+    fn default() -> Self {
+        Duplex {
+            r: io::stdin(),
+            w: io::stdout(),
+        }
+    }
+}
+
+impl Read for Duplex {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.r.read(buf)
+    }
+}
+
+impl Write for Duplex {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.w.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.w.flush()
+    }
+}

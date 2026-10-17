@@ -1,10 +1,11 @@
 //! Coordinator role (design.md §5.2).
 //!
-//! Speaks the control channel to `swing-server`, and forks/supervises
-//! `swing-guest container` children, routing exec/fs frames to the child that
-//! owns the frame's container id. Children are spawned with `Command` and
-//! given a `socketpair` as their stdin+stdout; framed messages are forwarded
-//! to the child and its response frames relayed back to the server.
+//! Speaks the control channel to `swing-server`, and spawns/supervises the
+//! container children (each one `bwrap … swing-guest container`, see
+//! `sandbox.rs`), routing exec/fs frames to the child that owns the frame's
+//! container id. Children are spawned with `Command` and given a `socketpair` as
+//! their stdin+stdout; framed messages are forwarded to the child and its
+//! response frames relayed back to the server.
 //!
 //! The server spawns this coordinator and hands it one end of a `socketpair` as
 //! its stdin+stdout — the inherited-fd form of the private local control channel
@@ -14,7 +15,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
@@ -31,7 +32,6 @@ pub fn run(args: &[String]) -> Result<()> {
     // The server spawns us and hands us one end of a socketpair as our
     // stdin+stdout (the inherited-fd control channel). Flags come from the
     // server; env vars remain as a fallback.
-    let mut sandbox = std::env::var("SWING_SANDBOX").map(|v| v == "1").unwrap_or(false);
     let mut work_dir = match std::env::var("SWING_WORK_DIR") {
         Ok(w) => w,
         Err(_) => std::env::current_dir()?.to_string_lossy().into_owned(),
@@ -39,15 +39,11 @@ pub fn run(args: &[String]) -> Result<()> {
 
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
-            "--sandbox" => sandbox = true,
-            "--work-dir" => {
-                i += 1;
-                if let Some(w) = args.get(i) {
-                    work_dir = w.clone();
-                }
+        if args[i].as_str() == "--work-dir" {
+            i += 1;
+            if let Some(w) = args.get(i) {
+                work_dir = w.clone();
             }
-            _ => {}
         }
         i += 1;
     }
@@ -55,18 +51,13 @@ pub fn run(args: &[String]) -> Result<()> {
     // Control channel is our inherited stdin+stdout (the server's socketpair
     // end) — the same `Duplex` shape the container children use. No socket file,
     // no listener: the fd *is* the capability boundary (D-45/D-46).
-    eprintln!(
-        "swing-guest coordinator (inherited channel; work dir: {work_dir}, sandbox: {sandbox})"
-    );
-    let conn = Conn::new(Duplex {
-        r: io::stdin(),
-        w: io::stdout(),
-    });
-    serve(conn, &work_dir, sandbox)
+    eprintln!("swing-guest coordinator (inherited channel; work dir: {work_dir})");
+    let conn = Conn::new(swing_proto::Duplex::default());
+    serve(conn, &work_dir)
 }
 
 /// Handshake, then serve one server connection until it closes.
-fn serve<S: Read + Write>(mut conn: Conn<S>, work_dir: &str, sandbox: bool) -> Result<()> {
+fn serve<S: Read + Write>(mut conn: Conn<S>, work_dir: &str) -> Result<()> {
     // Handshake: build_id pairs with the server build so a version mismatch
     // is a clear error, not garbage (design.md §7 "Versioning").
     conn.send(
@@ -79,10 +70,12 @@ fn serve<S: Read + Write>(mut conn: Conn<S>, work_dir: &str, sandbox: bool) -> R
         Vec::new(),
     )?;
     conn.send(Stream::Control, 0, 0, &Msg::Ready, Vec::new())?;
-    handle(&mut conn, work_dir, sandbox)
+    handle(&mut conn, work_dir)
 }
 
-fn handle<S: Read + Write>(conn: &mut Conn<S>, work_dir: &str, sandbox: bool) -> Result<()> {
+/// Serve the server's frames, spawning a container child per container id on
+/// first use.
+fn handle<S: Read + Write>(conn: &mut Conn<S>, work_dir: &str) -> Result<()> {
     let mut containers: HashMap<u32, ContainerHandle> = HashMap::new();
 
     while let Some(f) = conn.recv()? {
@@ -95,7 +88,7 @@ fn handle<S: Read + Write>(conn: &mut Conn<S>, work_dir: &str, sandbox: bool) ->
             | Msg::FsWrite { .. }
             | Msg::FsList { .. } => {
                 if !containers.contains_key(&f.id) {
-                    let h = spawn_container(f.id, work_dir, sandbox)
+                    let h = spawn_container(f.id, work_dir)
                         .with_context(|| format!("failed to spawn container {}", f.id))?;
                     containers.insert(f.id, h);
                 }
@@ -106,7 +99,7 @@ fn handle<S: Read + Write>(conn: &mut Conn<S>, work_dir: &str, sandbox: bool) ->
 
             Msg::ContainerCreate { id } => {
                 let id = *id;
-                let h = spawn_container(id, work_dir, sandbox)?;
+                let h = spawn_container(id, work_dir)?;
                 containers.insert(id, h);
                 conn.send(Stream::Control, id, 0, &Msg::ContainerReady { id }, Vec::new())?;
             }
@@ -143,27 +136,30 @@ fn handle<S: Read + Write>(conn: &mut Conn<S>, work_dir: &str, sandbox: bool) ->
     Ok(())
 }
 
-fn spawn_container(id: u32, work_dir: &str, sandbox: bool) -> Result<ContainerHandle> {
+/// Spawn a container child under bubblewrap and hand it one end of a
+/// `socketpair` as its stdin+stdout. bubblewrap builds the sandbox and runs the
+/// child as **PID 1** of its own PID namespace (T4; OQ-7 resolved to bubblewrap,
+/// D-22); if bubblewrap fails to spawn, the call comes back as `container_died`
+/// rather than serving unsandboxed. `work_dir` is bound read-write at `/work` by
+/// bubblewrap, so the payload never sees the host path.
+fn spawn_container(id: u32, work_dir: &str) -> Result<ContainerHandle> {
     let (coord_end, child_end) = UnixStream::pair()?;
     let exe = std::env::current_exe()?;
+    let bwrap = std::env::var("SWING_BWRAP").unwrap_or_else(|_| "bwrap".into());
 
-    let mut cmd = Command::new(exe);
-    cmd.arg("container")
-        .arg("--id")
-        .arg(id.to_string())
-        .arg("--work-dir")
-        .arg(work_dir);
-    if sandbox {
-        cmd.arg("--sandbox");
-    }
+    let mut cmd = Command::new(&bwrap);
+    cmd.args(crate::sandbox::bwrap_args(work_dir, &exe, id));
 
     // Give the child the socketpair as its stdin+stdout (same socket, two fds).
-    // UnixStream -> OwnedFd -> File -> Stdio (all `From` impls; no fd traits).
+    // bubblewrap passes its own 0/1 through to the payload, so the framed
+    // channel survives the sandbox boundary.
     cmd.stdin(Stdio::from(File::from(OwnedFd::from(child_end.try_clone()?))));
     cmd.stdout(Stdio::from(File::from(OwnedFd::from(child_end))));
     cmd.stderr(Stdio::inherit());
 
-    let child = cmd.spawn()?;
+    let child = cmd
+        .spawn()
+        .with_context(|| format!("spawn {bwrap} (install bubblewrap or set SWING_BWRAP)"))?;
     Ok(ContainerHandle {
         conn: Conn::new(coord_end),
         child,
@@ -215,27 +211,4 @@ fn conn_error<S: Read + Write>(
         Vec::new(),
     )?;
     Ok(())
-}
-
-/// A single `Read + Write` handle over the coordinator's stdin (reads) and
-/// stdout (writes). Both are the same `socketpair` end the server created, so
-/// this is a full-duplex framed channel without needing an unsafe fd dup.
-struct Duplex {
-    r: io::Stdin,
-    w: io::Stdout,
-}
-
-impl Read for Duplex {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.r.read(buf)
-    }
-}
-
-impl Write for Duplex {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.w.write(buf)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.w.flush()
-    }
 }
