@@ -39,6 +39,11 @@ const GUEST: &str = env!("CARGO_BIN_EXE_swing-guest");
 /// The spike's single implicit container id (`GuestClient` uses 1 too).
 const CONTAINER_ID: u32 = 1;
 
+/// A sentinel placed in the guest's own environment. `--clearenv` in
+/// `sandbox.rs` must keep it out of the container child, so the model's
+/// `shell` can never read it back (see `shell_cannot_see_inherited_environment`).
+const CANARY_SECRET: &str = "swing-canary-secret-must-not-leak";
+
 /// Generous but finite: a guest that fails to answer a call must fail the test,
 /// not hang the run.
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -81,6 +86,9 @@ impl Guest {
 
         let mut cmd = Command::new(GUEST);
         cmd.arg("--work-dir").arg(&work);
+        // Stand in for the server's provider credentials: the coordinator
+        // inherits this, and the container child must not (sandbox `--clearenv`).
+        cmd.env("SWING_CANARY_SECRET", CANARY_SECRET);
         cmd.stdin(Stdio::from(File::from(OwnedFd::from(
             theirs.try_clone().expect("clone socketpair"),
         ))));
@@ -558,5 +566,32 @@ fn shell_cannot_reach_outside_the_work_root() {
     assert!(!stderr.is_empty(), "cat exited {code:?} with no stderr: {stdout:?}");
 
     // And the host side agrees.
+    guest.assert_canary_intact();
+}
+
+/// The container's `sh` must not inherit the coordinator's environment, which
+/// stands in for the server's provider credentials. `--clearenv` in `sandbox.rs`
+/// drops it; this proves the model cannot read it back through `shell`, which
+/// has no path policy of its own (design.md principle 3 / D-21). Without
+/// `--clearenv` the sentinel set in `Guest::new` would appear in the container.
+#[test]
+fn shell_cannot_see_inherited_environment() {
+    let mut guest = Guest::new();
+
+    // The direct form: the kernel's record of this process's environment.
+    let (stdout, stderr, code) = guest.exec("cat /proc/self/environ");
+    assert_eq!(code, Some(0), "cat /proc/self/environ failed: {stderr}");
+    assert!(
+        !stdout.contains(CANARY_SECRET),
+        "shell leaked inherited env via /proc/self/environ: {stdout:?}"
+    );
+
+    // The indirect form: the shell's own view of its environment.
+    let (stdout, _stderr, _code) = guest.exec("env");
+    assert!(
+        !stdout.contains(CANARY_SECRET),
+        "shell leaked inherited env via `env`: {stdout:?}"
+    );
+
     guest.assert_canary_intact();
 }

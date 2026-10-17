@@ -63,6 +63,25 @@ pub fn bwrap_args(work_dir: &str, exe: &Path, id: u32) -> Vec<String> {
     // (bubblewrap >= 0.6).
     args.push("--disable-userns".into());
 
+    // Environment. The payload (and the `sh -c` it runs) must NOT inherit the
+    // coordinator's environment: `Command` inheritance carries the server's
+    // provider credentials (OPENAI_API_KEY) all the way down, so `shell` could
+    // read them back via `env` / `cat /proc/self/environ` — violating the
+    // "server owns all credentials; nothing model-related enters the container"
+    // invariant (design.md principle 3 / D-21). Clear it, then re-export only a
+    // minimal, non-secret PATH/HOME/PWD so the shell still resolves the
+    // read-only toolchain bind set.
+    args.push("--clearenv".into());
+    args.push("--setenv".into());
+    args.push("PATH".into());
+    args.push("/usr/local/bin:/usr/bin:/bin".into());
+    args.push("--setenv".into());
+    args.push("HOME".into());
+    args.push("/work".into());
+    args.push("--setenv".into());
+    args.push("PWD".into());
+    args.push("/work".into());
+
     // A fresh root: tmpfs, then the curated binds. (Deliberately *not*
     // `--ro-bind / /`: the design wants a curated bind set, not the whole host
     // visible to the container.)

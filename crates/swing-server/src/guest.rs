@@ -48,6 +48,12 @@ impl GuestClient {
 
         let mut cmd = Command::new(guest_bin);
         cmd.arg("--work-dir").arg(work_dir);
+        // Defense in depth: the guest never talks to the provider, so it must
+        // not hold the API key either. Drop it from the child's environment so
+        // the credential never leaves the server process (design.md principle 3
+        // / D-21). The container child is additionally cleared via `--clearenv`
+        // in `swing-guest/src/sandbox.rs`.
+        cmd.env_remove("OPENAI_API_KEY");
         // Hand the guest one end of the socketpair as its stdin+stdout (same
         // socket, two fds) — UnixStream -> OwnedFd -> File -> Stdio.
         cmd.stdin(Stdio::from(File::from(OwnedFd::from(guest_end.try_clone()?))));
