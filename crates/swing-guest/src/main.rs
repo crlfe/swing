@@ -1,4 +1,4 @@
-//! swing-guest (design.md §5.2): one binary, two roles.
+//! swing-guest (design §5.2): one binary, two roles.
 //!
 //!   swing-guest                 # coordinator: control channel + container children
 //!   swing-guest container ...   # container child: sandbox + exec/fs serving

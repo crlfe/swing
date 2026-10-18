@@ -1,4 +1,4 @@
-//! Frame layout and codec (design.md §7).
+//! Frame layout and codec (design §7).
 //!
 //! Fixed header (29 bytes, big-endian):
 //!   0  magic   4  "SWNG"

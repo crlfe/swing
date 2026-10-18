@@ -1,12 +1,12 @@
 # Swing control-channel message set (spike draft).
 #
-# Companion to design.md §7 (wire protocol) and §6 (tool protocol). This file is
-# the single definition shared by swing-server, swing-guest, and (later) the
-# `swing trace` pretty-printer. It is documentation for now; the Rust source of
-# truth is crates/swing-proto/src/msg.rs. Keeping the two in sync is tracked by
-# OQ-3 / T3 in todo.md.
+# Companion to design §7 (wire protocol) and §6 (tool protocol) — see
+# design/README.md for the section map. This file is the single definition shared
+# by swing-server, swing-guest, and (later) the `swing trace` pretty-printer. It is
+# documentation for now; the Rust source of truth is crates/swing-proto/src/msg.rs.
+# Keeping the two in sync is tracked by OQ-3 / T3 in todo/README.md.
 #
-# Frame layout (design.md §7), big-endian, fixed header = 29 bytes:
+# Frame layout (design §7), big-endian, fixed header = 29 bytes:
 #   0  magic   4  "SWNG"
 #   4  version 1  currently 1
 #   5  kind    1  0 = header only, 1 = header + body

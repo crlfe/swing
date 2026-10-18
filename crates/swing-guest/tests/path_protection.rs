@@ -671,7 +671,7 @@ fn shell_cannot_reach_outside_the_work_root() {
 /// The container's `sh` must not inherit the coordinator's environment, which
 /// stands in for the server's provider credentials. `--clearenv` in `sandbox.rs`
 /// drops it; this proves the model cannot read it back through `shell`, which
-/// has no path policy of its own (design.md principle 3 / D-21). Without
+/// has no path policy of its own (design principle 3 / D-21). Without
 /// `--clearenv` the sentinel set in `Guest::new` would appear in the container.
 #[test]
 fn shell_cannot_see_inherited_environment() {
@@ -748,7 +748,7 @@ fn list_dir_truncates_a_large_directory() {
 }
 
 /// shell honors `timeout`: a long-running command is killed and reported as a
-/// distinct timeout, not a generic signal death (design.md §6). Uses a pure-shell
+/// distinct timeout, not a generic signal death (design §6). Uses a pure-shell
 /// busy loop so it does not depend on any external binary.
 #[test]
 fn shell_timeout_kills_a_long_command() {

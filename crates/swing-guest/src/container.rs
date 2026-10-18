@@ -1,4 +1,4 @@
-//! Container role (design.md §5.2): the sandboxed child.
+//! Container role (design §5.2): the sandboxed child.
 //!
 //! bubblewrap has already built the sandbox and made this process **PID 1** of
 //! its own PID namespace (see `sandbox.rs`, D-22 / OQ-7). This role only applies

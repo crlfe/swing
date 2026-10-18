@@ -1,4 +1,4 @@
-//! Coordinator role (design.md §5.2).
+//! Coordinator role (design §5.2).
 //!
 //! Speaks the control channel to `swing-server`, and spawns/supervises the
 //! container children (each one `bwrap … swing-guest container`, see
@@ -59,7 +59,7 @@ pub fn run(args: &[String]) -> Result<()> {
 /// Handshake, then serve one server connection until it closes.
 fn serve<S: Read + Write>(mut conn: Conn<S>, work_dir: &str) -> Result<()> {
     // Handshake: build_id pairs with the server build so a version mismatch
-    // is a clear error, not garbage (design.md §7 "Versioning").
+    // is a clear error, not garbage (design §7 "Versioning").
     conn.send(
         Stream::Control,
         0,

@@ -1,4 +1,4 @@
-//! fs primitives (design.md §6).
+//! fs primitives (design §6).
 //!
 //! Read/write/list against a work directory rooted at `work_root`. Paths are
 //! relative to that root and may not escape it. The container always runs

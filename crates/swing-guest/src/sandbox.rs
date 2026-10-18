@@ -1,4 +1,4 @@
-//! Container sandbox via bubblewrap (design.md §11, T4; OQ-7 resolved to
+//! Container sandbox via bubblewrap (design §11, T4; OQ-7 resolved to
 //! bubblewrap). The coordinator runs `bwrap <flags> /swing-guest container
 //! --id N`, so the container child runs as **PID 1** inside the bubblewrap
 //! sandbox and the host-side `unshare`/`pivot_root`/cap-drop recipe is gone —
@@ -68,7 +68,7 @@ pub fn bwrap_args(work_dir: &str, exe: &Path, id: u32) -> Vec<String> {
     // provider credentials (OPENAI_API_KEY) all the way down, so `shell` could
     // read them back via `env` / `cat /proc/self/environ` — violating the
     // "server owns all credentials; nothing model-related enters the container"
-    // invariant (design.md principle 3 / D-21). Clear it, then re-export only a
+    // invariant (design principle 3 / D-21). Clear it, then re-export only a
     // minimal, non-secret PATH/HOME/PWD so the shell still resolves the
     // read-only toolchain bind set.
     args.push("--clearenv".into());

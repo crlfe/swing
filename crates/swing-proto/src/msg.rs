@@ -1,8 +1,8 @@
-//! The message set (design.md §6 wire primitives).
+//! The message set (design §6 wire primitives).
 //!
 //! The JSON header carries one of these tagged messages (`"type": "..."`).
 //! Binary payloads (file contents, command output) travel in the frame *body*,
-//! never as escaped strings — see design.md §6 "Binary-safe".
+//! never as escaped strings — see design §6 "Binary-safe".
 //!
 //! This enum is the Rust source of truth for `schema.toml`. Keep them in sync
 //! (OQ-3 / T3).
@@ -43,7 +43,7 @@ pub enum Msg {
         #[serde(default)]
         signal: Option<i32>,
         /// True when the guest killed the process for exceeding `timeout_ms`.
-        /// Keeps timeout distinct from a genuine signal death (design.md §6).
+/// Keeps timeout distinct from a genuine signal death (design §6).
         #[serde(default)]
         timed_out: bool,
         runtime_ms: u64,
@@ -65,7 +65,7 @@ pub enum Msg {
     FsResult {
         ok: bool,
         /// Model-actionable code: `no_such_file`, `bad_path`, `payload_too_large`,
-        /// ... never a raw errno (design.md §6 / T1).
+/// ... never a raw errno (design §6 / T1).
         #[serde(default)]
         error: Option<String>,
         #[serde(default)]

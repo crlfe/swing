@@ -1,4 +1,4 @@
-//! The agent loop (design.md §5.5, T2, T5).
+//! The agent loop (design §5.5, T2, T5).
 //!
 //! Spike rules:
 //! - Context = full transcript every turn (T2, naive rule).

@@ -1,6 +1,6 @@
-//! Model-facing tool surface (design.md §6, T1).
+//! Model-facing tool surface (design §6, T1).
 //!
-//! Two layers, kept distinct (design.md §6): the JSON schema the model sees,
+//! Two layers, kept distinct (design §6): the JSON schema the model sees,
 //! and the wire primitives sent to `swing-guest`. `dispatch` is the seam.
 //!
 //! The four v1 tools (D-43): read_file, write_file, list_dir, shell.
@@ -209,7 +209,7 @@ fn format_exec(r: &ExecResult) -> String {
         out.push_str("[stderr]\n");
         out.push_str(&r.stderr);
     }
-    // Timeout is distinct from a genuine signal death (design.md §6).
+    // Timeout is distinct from a genuine signal death (design §6).
     if r.timed_out {
         out.push_str("\n[timeout]");
     } else {

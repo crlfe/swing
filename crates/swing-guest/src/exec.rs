@@ -1,4 +1,4 @@
-//! exec primitives (design.md §6).
+//! exec primitives (design §6).
 //!
 //! Run `sh -c <command>` to completion, stream stdout/stderr as `exec_output`
 //! frames (chunked to fit MAX_FRAME_SIZE), then one `exec_exit`. Runs in the
@@ -10,7 +10,7 @@
 //! than silently honored. `timeout_ms` is enforced with a wall-clock deadline:
 //! a killer thread SIGKILLs the child if it outlives the deadline, and the
 //! result is reported with `timed_out: true` so a timeout stays distinct from a
-//! genuine signal death (design.md §6).
+//! genuine signal death (design §6).
 //!
 //! stdout and stderr are drained concurrently so a child that floods one pipe
 //! cannot deadlock the reader of the other.

@@ -1,4 +1,4 @@
-//! Client to `swing-guest` over the control channel (design.md §5.2/§6).
+//! Client to `swing-guest` over the control channel (design §5.2/§6).
 //!
 //! The server *spawns* `swing-guest` as a child and hands it one end of a
 //! `socketpair` as its stdin+stdout — the inherited-fd form of the private local
@@ -91,7 +91,7 @@ impl GuestClient {
         cmd.arg("--work-dir").arg(work_dir);
         // Defense in depth: the guest never talks to the provider, so it must
         // not hold the API key either. Drop it from the child's environment so
-        // the credential never leaves the server process (design.md principle 3
+        // the credential never leaves the server process (design principle 3
         // / D-21). The container child is additionally cleared via `--clearenv`
         // in `swing-guest/src/sandbox.rs`.
         cmd.env_remove("OPENAI_API_KEY");

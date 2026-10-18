@@ -3,7 +3,7 @@ name = "swing-guest"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Swing guest coordinator: remote exec + filesystem primitives behind the control channel (design.md §5.2/§6)."
+description = "Swing guest coordinator: remote exec + filesystem primitives behind the control channel (design §5.2/§6)."
 
 [dependencies]
 swing-proto = { path = "../swing-proto" }

@@ -1,9 +1,12 @@
 # Swing — spike (first step)
 
-This is the **first step** from [`design/todo.md`](design/todo.md): the thinnest
+This is the **first step** from [`todo/first-step.md`](todo/first-step.md): the thinnest
 thing that puts a model in a container. The UI is a **terminal chat** (stdin /
 stdout of `swing-server`) — no TUI, no webapp, no HTTP API, no daemon, no token
 auth.
+
+The design itself is in [`design/`](design/README.md) — start at
+[`design/README.md`](design/README.md) for the index and the `§`-number map.
 
 It is a **skeleton**: the structure and the framed server↔guest boundary are
 real, the hard parts are marked `TODO`. Organization is deliberately simple and
@@ -28,7 +31,8 @@ Real (the spike's point):
 - **Terminal condition** (T5): "model produced text with no tool call" ends the
   turn and hands control back to the human. Max 40 iterations per attempt.
 
-Deferred (explicitly out of this spike — see todo.md):
+Deferred (explicitly out of this spike — see
+[todo/first-step.md](todo/first-step.md)):
 
 - Cgroups (T4): the container sandbox is bubblewrap, but cgroup `memory.max` /
   `pids.max` fault isolation is deferred.
@@ -93,7 +97,8 @@ cargo run -p swing-server
 The container sandbox is **bubblewrap**: the coordinator runs `bwrap … swing-guest
 container` and the child runs as PID 1 inside it. It is **always on** — there is no
 `SWING_SANDBOX` switch, and a container whose sandbox fails to set up dies rather
-than serving unsandboxed. It is *not yet verified to contain* — see todo.md T4/T14.
+than serving unsandboxed. It is *not yet verified to contain* — see
+[todo/tier1-a1.md](todo/tier1-a1.md) T4 and [todo/tier2-b1.md](todo/tier2-b1.md) T14.
 Knobs:
 
 - `SWING_SANDBOX_BINDS` — colon-separated absolute host paths bound read-only as
@@ -126,4 +131,5 @@ skipping quietly.
   Large payloads are meant to be chunked on the bulk stream; the spike caps
   single-frame payloads instead (see `TODO` in `swing-guest/src/fs.rs`).
 - File contents and command output travel in the frame **body** as opaque bytes,
-  never as escaped strings (design.md §6).
+  never as escaped strings (design §6 —
+  [design/interfaces/tool-protocol.md](design/interfaces/tool-protocol.md)).

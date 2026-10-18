@@ -1,4 +1,4 @@
-//! Swing control-channel wire protocol (design.md §7).
+//! Swing control-channel wire protocol (design §7).
 //!
 //! Binary frames: a fixed 29-byte header, a serde_json header, and an opaque
 //! body. The `stream` field multiplexes control/exec/bulk/log over a single
