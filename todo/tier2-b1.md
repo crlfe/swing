@@ -73,6 +73,14 @@ read-only host filesystem, a dedicated uid with no readable home directory, a ca
 file. Make it repeatable so it becomes a CI test, not a one-off demo. Include a check
 that QEMU has no network capability.
 
+**Track A status.** The method is already partly exercised without QEMU:
+`crates/swing-guest/tests/path_protection.rs` (host canary + path policy) and
+`crates/swing-guest/tests/containment.rs` (in-container boundary probes: capabilities,
+PID/net/mount namespaces, fixed uid/gid) run as CI tests against a real bubblewrap
+container. What remains Track-B-specific is the QEMU layer: confirming QEMU itself has
+no network capability (ties to D-45) and the VM-level sweep. See
+[tier1-a1.md](tier1-a1.md) T4.
+
 ---
 
 **Next tier:** [tier3-structural.md](tier3-structural.md). **Previous:**

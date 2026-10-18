@@ -20,6 +20,8 @@ Recorded here so they are not re-litigated, and so `todo/` does not have to repe
 - **Network backend rejection** (D-28 … D-31).
 - **Image size budget** (D-36).
 - **Egress mechanism switched from SOCKS5 to transparent interception** (D-32, D-38 … D-40).
+- **Prototype container PID model**: bubblewrap runs a minimal init as PID 1 of the new
+  PID namespace; `swing-guest` is its child (PID 2) (D-22, revised).
 
 ## The record
 
@@ -46,7 +48,7 @@ Recorded here so they are not re-litigated, and so `todo/` does not have to repe
 | D-19 | Control channel is virtio-serial over a **private local chardev** — an inherited fd (Unix) or a DACL-secured named pipe (Windows) — created by the server and handed to QEMU; QEMU never listens and never opens a network socket. *(revised)* |
 | D-20 | Environment changes restart the container; running containers are never mutated. |
 | D-21 | Server owns all credentials; nothing model-related enters the VM. |
-| D-22 | Prototype containers use **bubblewrap** (`bwrap`), with `swing-guest` as PID 1 inside it. |
+| D-22 | Prototype containers use **bubblewrap** (`bwrap`), which runs a minimal init as PID 1 of the new PID namespace with `swing-guest` as its child (PID 2). *(revised)* |
 | D-23 | Prototype packaging is a `tar.zst` bundle — a prototype convenience, not the shipping plan. |
 | D-24 | Prototype is Linux-only; QEMU invocation and abstractions stay portable. |
 | D-25 | cgroup `memory.max` / `pids.max` as fault isolation, not fairness. |
@@ -71,6 +73,7 @@ Recorded here so they are not re-litigated, and so `todo/` does not have to repe
 | D-44 | On Windows the QEMU channel is a **named pipe secured by a DACL** granting access only to QEMU's **restricted token** (`CreateRestrictedToken`); the DACL is the capability boundary, replacing the handshake token. |
 | D-45 | QEMU is granted **no socket capability**: the control channel is an inherited fd or a pipe handle, so the `-sandbox` / restricted-token grant is file I/O plus the channel handles only. Reinforces D-28. |
 | D-46 | The **CLI↔server** channel is a private local channel — a listening Unix domain socket (Linux/macOS) or a named pipe with a DACL scoped to the user's SID (Windows). The OS object (socket-file perms / pipe DACL) is the capability boundary, so this channel needs no handshake token. The TCP server exists only for the browser-facing HTTP API/webapp. |
+| D-47 | The container pins a **fixed uid/gid 1000** inside its user namespace (`bwrap --uid 1000 --gid 1000`), so the in-container identity is identical regardless of the host user's uid/gid. The per-container *distinct* uid (the egress hook, D-40) is a separate, later mechanism. |
 
 ## Where each decision lives in the design
 
@@ -82,7 +85,7 @@ Recorded here so they are not re-litigated, and so `todo/` does not have to repe
 | Wire protocol | D-14, D-15, D-42 | [wire-protocol.md](../interfaces/wire-protocol.md) |
 | Channels and process model | D-19, D-27, D-44, D-45, D-46 | [process-model.md](../architecture/process-model.md), [vm.md](../sandbox/vm.md) |
 | Environments and storage | D-12, D-13, D-18, D-20, D-36 | [environments.md](../data/environments.md), [storage.md](../data/storage.md) |
-| Containers | D-22, D-25, D-40 | [containers.md](../sandbox/containers.md) |
+| Containers | D-22, D-25, D-40, D-47 | [containers.md](../sandbox/containers.md) |
 | Networking and egress | D-8, D-28 … D-34, D-38, D-39 | [networking.md](../networking/networking.md), [egress.md](../networking/egress.md) |
 | Packaging and distribution | D-23, D-37 | [packaging.md](../data/packaging.md) |
 | Provider | D-41 | [todo/tier1-a1.md](../../todo/tier1-a1.md) (T7) |

@@ -1,11 +1,12 @@
 //! Container role (design §5.2): the sandboxed child.
 //!
-//! bubblewrap has already built the sandbox and made this process **PID 1** of
-//! its own PID namespace (see `sandbox.rs`, D-22 / OQ-7). This role only applies
-//! the two payload-side prctls bubblewrap does not cover (`harden_payload`), then
-//! serves exec/fs frames over its stdin+stdout — the `socketpair` the coordinator
-//! handed it, which bubblewrap passes through unchanged. The workspace is the
-//! bind-mounted `/work`; the host work directory is only reachable through it.
+//! bubblewrap has already built the sandbox and made this process a child
+//! (PID 2) of bubblewrap's init (PID 1) in its own PID namespace (see
+//! `sandbox.rs`, D-22 / OQ-7). This role only applies the two payload-side
+//! prctls bubblewrap does not cover (`harden_payload`), then serves exec/fs
+//! frames over its stdin+stdout — the `socketpair` the coordinator handed it,
+//! which bubblewrap passes through unchanged. The workspace is the bind-mounted
+//! `/work`; the host work directory is only reachable through it.
 //!
 //! Hardening runs before the first frame is read; if it fails the child dies
 //! rather than serving unsandboxed. Once it is serving, a failed call is answered
@@ -28,9 +29,10 @@ pub fn run(args: &[String]) -> Result<()> {
         i += 1;
     }
 
-    // bubblewrap has already built the sandbox and made us PID 1 of its PID
-    // namespace; the only hardening left is the two prctls bubblewrap does not
-    // cover. The workspace is the bind-mounted /work, so `work_root` is fixed.
+    // bubblewrap has already built the sandbox and made us a child (PID 2) under
+    // bubblewrap's PID-1 init in its PID namespace; the only hardening left is
+    // the two prctls bubblewrap does not cover. The workspace is the bind-mounted
+    // /work, so `work_root` is fixed.
     crate::sandbox::harden_payload()?;
     // bubblewrap already `--chdir`s here; this guards against a wrong cwd
     // sending `exec` somewhere else.

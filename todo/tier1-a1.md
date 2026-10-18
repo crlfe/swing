@@ -84,13 +84,16 @@ Decide for A1:
   exercised early. Note this code may be replaced by `systemd-run --scope` in the guest
   (D-36), so keep it isolated in one module.
 
-**Spike status (implemented, always on, unverified).** The coordinator spawns
-`bwrap … swing-guest container` children; bubblewrap builds the sandbox and runs the
-child as PID 1 of its own PID namespace before it reads its first frame — there is no
+**Spike status (implemented, always on, containment probed).** The coordinator spawns
+`bwrap … swing-guest container` children; bubblewrap builds the sandbox and runs a
+minimal init as PID 1 of the new PID namespace (reaping zombies and monitoring the
+payload, which is its child at PID 2); the payload reads its first frame only after the
+sandbox is built — there is no
 `--sandbox` flag and no `SWING_SANDBOX` env var, and a child whose sandbox fails to
 set up dies instead of serving unsandboxed. bubblewrap flags (built in
 `swing-guest/src/sandbox.rs`): `--unshare-user --unshare-all` (user+mount+pid+net+ipc+uts),
-uid/gid map to the caller uid, `--disable-userns`, `--die-with-parent`, a
+`--uid 1000 --gid 1000` (pin a fixed in-container identity regardless of the host
+uid/gid), `--disable-userns`, `--die-with-parent`, a
 tmpfs root with a read-only toolchain bind set (`SWING_SANDBOX_BINDS`, default
 `/bin:/usr:/lib:/lib64:/etc`), a read-write `/work` bind, `proc`, tmpfs `/tmp`, and
 `--dev`; bubblewrap's own default capability drop covers the payload's capability
@@ -99,22 +102,26 @@ is now a runtime dependency (override with `SWING_BWRAP`). Unprivileged user
 namespaces confirmed on the dev box; bubblewrap presence to be confirmed on the test
 box.
 
-**Still open for T4 (needs on-box iteration):**
-- Verify the recipe *contains* (T14 canary test). The path-protection tests now
-  run against a sandboxed container and show the shell cannot reach a host
-  canary, which proves the recipe *runs*; the direct boundary probes
-  (mountinfo, `/proc/net/dev`, `NoNewPrivs`, `CapBnd`, pid 1) are still to be
-  written.
-- Confirm bubblewrap's default capability drop actually clears the payload's
-  **effective/permitted** sets (the `CapBnd`/`CapEff` probe above is how), rather
-  than assuming it.
+**Containment probes (written, passing on the dev box).** `tests/containment.rs` runs
+commands *inside* the sandboxed container and reads the kernel's record of it; it
+confirms `NoNewPrivs == 1`, `CapEff == 0` (the payload holds no effective capabilities
+— guaranteed both by bubblewrap's drop and by running as non-root uid 1000; the
+bounding set `CapBnd` is surfaced as the uid-independent view), PID-namespace isolation
+(PID 1 `bwrap`, PID 2 `swing-guest`, host processes invisible), only-`lo` networking, a
+tmpfs root with the curated ro/rw binds, a tmpfs `/tmp` the payload can write to, and
+the fixed uid/gid 1000 — including that a file written into `/work` maps back to the
+host caller's uid/gid outside the container. `tests/path_protection.rs` shows the shell
+cannot reach a host canary.
+
+**Still open for T4:**
 - The read-only bind set is a host-dependent stopgap — the real toolchain supply is
   T15/OQ-4.
 - cgroup `memory.max` / `pids.max` (§11) not yet wired. Note `--unshare-all` puts
   the container in its own cgroup namespace on newer bubblewrap; check what the
   coordinator can see before wiring limits (D-25).
-- Per-container distinct uid inside the userns (host-side distinct uid is a Track B
-  / egress concern).
+- Per-container distinct uid. The spike pins a fixed uid 1000 inside the userns for
+  host-independence; the per-container *distinct* uid (the egress hook, D-40) is a
+  Track B / egress concern and still to be built.
 
 ### T5. Terminal conditions and iteration policy  *(OQ-5)*
 Decide:
