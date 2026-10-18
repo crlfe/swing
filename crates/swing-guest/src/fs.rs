@@ -39,6 +39,11 @@ use swing_proto::{Conn, EntryKind, FsEntry, Msg, Stream, MAX_BODY};
 /// truncation marker tells the model to re-read with an offset (T1).
 const DEFAULT_READ_LIMIT: u64 = 3000;
 
+/// Budget for the `entries` array of an `fs_list` result. `entries` live in the
+/// JSON header, so a large directory overflows MAX_FRAME_SIZE and fails the
+/// whole call (todo.md T3). Keep only what fits and mark the listing truncated.
+const LIST_HEADER_BUDGET: usize = 3500;
+
 /// The lexical path policy: reject empty paths, absolute paths, and any `..`
 /// component. Deliberately stricter than "resolves inside the root": `foo/../bar`
 /// is refused even though it resolves back inside, because the policy is
@@ -56,9 +61,11 @@ fn path_policy_ok(path: &str) -> bool {
 /// a symlink pointing outside the root cannot escape. Returns the canonicalized
 /// path, or `None` if refused.
 ///
+/// `pub(crate)` so `exec` can resolve its `cwd` with the same policy.
+///
 /// Not race-free (canonicalize-then-open); the race-free form is
 /// `openat2(RESOLVE_NO_SYMLINKS)`. The container boundary is the primary wall.
-fn resolve_safe(work_root: &str, path: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_safe(work_root: &str, path: &str) -> Option<PathBuf> {
     if !path_policy_ok(path) {
         return None;
     }
@@ -298,6 +305,24 @@ pub fn handle_list<S: Read + Write>(
         });
     }
     entries.sort_by(|a, b| a.name.cmp(&b.name));
+    let total = entries.len() as u64;
+
+    // `entries` travel in the JSON header, so a large directory can overflow
+    // MAX_FRAME_SIZE and fail the whole call (todo.md T3). Keep only what fits
+    // and mark the listing truncated so the model knows the view is partial.
+    let mut kept = Vec::new();
+    let mut used = 0usize;
+    let mut truncated = false;
+    for e in entries {
+        // +1 for the comma separator between array elements.
+        let cost = serde_json::to_string(&e).map(|s| s.len()).unwrap_or(usize::MAX) + 1;
+        if used + cost > LIST_HEADER_BUDGET {
+            truncated = true;
+            break;
+        }
+        used += cost;
+        kept.push(e);
+    }
 
     conn.send(
         Stream::Control,
@@ -306,9 +331,9 @@ pub fn handle_list<S: Read + Write>(
         &Msg::FsResult {
             ok: true,
             error: None,
-            entries,
-            total: None,
-            truncated: false,
+            entries: kept,
+            total: Some(total),
+            truncated,
         },
         Vec::new(),
     )?;

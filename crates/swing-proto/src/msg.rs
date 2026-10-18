@@ -42,6 +42,10 @@ pub enum Msg {
         code: Option<i32>,
         #[serde(default)]
         signal: Option<i32>,
+        /// True when the guest killed the process for exceeding `timeout_ms`.
+        /// Keeps timeout distinct from a genuine signal death (design.md §6).
+        #[serde(default)]
+        timed_out: bool,
         runtime_ms: u64,
     },
 

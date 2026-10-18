@@ -94,8 +94,8 @@ body = "stdout or stderr chunk (binary-safe)"
 name = "exec_exit"
 direction = "guest_to_server"
 stream = "exec"
-fields = ["code?", "signal?", "runtime_ms"]
-notes = "timeout / signal / non-zero exit must stay distinguishable."
+fields = ["code?", "signal?", "timed_out?", "runtime_ms"]
+notes = "timeout / signal / non-zero exit must stay distinguishable: timed_out is true when the guest killed the process for exceeding timeout_ms."
 
 # ---- fs: server -> guest ----
 [[message]]

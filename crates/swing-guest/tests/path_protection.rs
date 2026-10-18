@@ -238,6 +238,105 @@ impl Guest {
         )
     }
 
+    /// fs_read with explicit offset/limit; returns (ok, error, bytes, truncated).
+    fn fs_read_opts(
+        &mut self,
+        path: &str,
+        offset: Option<u64>,
+        limit: Option<u64>,
+    ) -> (bool, Option<String>, Vec<u8>, bool) {
+        let call = self.send_call(
+            Stream::Control,
+            &Msg::FsRead {
+                path: path.to_string(),
+                offset,
+                limit,
+            },
+            Vec::new(),
+        );
+        let f = self.wait_call(call);
+        match f.msg {
+            Msg::FsResult {
+                ok,
+                error,
+                truncated,
+                ..
+            } => (ok, error, f.body, truncated),
+            other => panic!("unexpected fs_read response for {path:?}: {other:?}"),
+        }
+    }
+
+    /// fs_list; returns (ok, error, entries, total, truncated).
+    fn fs_list_full(
+        &mut self,
+        path: &str,
+    ) -> (bool, Option<String>, Vec<FsEntry>, Option<u64>, bool) {
+        let call = self.send_call(
+            Stream::Control,
+            &Msg::FsList {
+                path: path.to_string(),
+            },
+            Vec::new(),
+        );
+        let f = self.wait_call(call);
+        match f.msg {
+            Msg::FsResult {
+                ok,
+                error,
+                entries,
+                total,
+                truncated,
+            } => (ok, error, entries, total, truncated),
+            other => panic!("unexpected fs_list response for {path:?}: {other:?}"),
+        }
+    }
+
+    /// exec with cwd and timeout; returns (stdout, stderr, code, timed_out, error).
+    /// `error` is Some(code) when the guest refused the call (e.g. a bad cwd).
+    fn exec_opts(
+        &mut self,
+        command: &str,
+        cwd: Option<&str>,
+        timeout_ms: Option<u64>,
+    ) -> (String, String, Option<i32>, bool, Option<String>) {
+        let call = self.send_call(
+            Stream::Exec,
+            &Msg::ExecStart {
+                command: command.to_string(),
+                cwd: cwd.map(str::to_string),
+                timeout_ms,
+            },
+            Vec::new(),
+        );
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        loop {
+            let f = self.wait_call(call);
+            match f.msg {
+                Msg::ExecOutput { stderr } => {
+                    if stderr {
+                        err.extend_from_slice(&f.body);
+                    } else {
+                        out.extend_from_slice(&f.body);
+                    }
+                }
+                Msg::ExecExit { code, timed_out, .. } => {
+                    return (
+                        String::from_utf8_lossy(&out).into_owned(),
+                        String::from_utf8_lossy(&err).into_owned(),
+                        code,
+                        timed_out,
+                        None,
+                    );
+                }
+                Msg::Error { code, .. } => {
+                    return (String::new(), String::new(), None, false, Some(code));
+                }
+                other => panic!("unexpected exec response to {command:?}: {other:?}"),
+            }
+        }
+    }
+
     /// The canary must be byte-identical and unmodified. Checked after every
     /// hostile call.
     fn assert_canary_intact(&self) {
@@ -591,6 +690,128 @@ fn shell_cannot_see_inherited_environment() {
     assert!(
         !stdout.contains(CANARY_SECRET),
         "shell leaked inherited env via `env`: {stdout:?}"
+    );
+
+    guest.assert_canary_intact();
+}
+
+/// read_file honors offset/limit, so a truncated file can actually be paged
+/// (the recovery path the tool description promises — todo.md T1).
+#[test]
+fn read_file_offset_pages_a_truncated_file() {
+    let mut guest = Guest::new();
+
+    // Larger than the default read cap (3000) but within the single-frame write
+    // budget (MAX_BODY), so one write suffices.
+    let body: Vec<u8> = (0..3500u32).map(|i| b'a' + (i % 26) as u8).collect();
+    let (ok, error) = guest.fs_write("big.txt", &body);
+    assert!(ok, "write big.txt -> {error:?}");
+
+    // First page: a small limit truncates and says so.
+    let (ok, error, first, truncated) = guest.fs_read_opts("big.txt", Some(0), Some(1000));
+    assert!(ok, "read page 0 -> {error:?}");
+    assert!(truncated, "page 0 was not marked truncated");
+    assert_eq!(first, &body[..1000], "page 0 bytes");
+
+    // Second page: offset continues exactly where the first left off.
+    let (ok, error, second, _) = guest.fs_read_opts("big.txt", Some(1000), Some(1000));
+    assert!(ok, "read page 1 -> {error:?}");
+    assert_eq!(second, &body[1000..2000], "page 1 bytes");
+
+    guest.assert_canary_intact();
+}
+
+/// list_dir truncates a large directory instead of overflowing the frame, and
+/// reports the full entry count so the model knows the view is partial (T3).
+#[test]
+fn list_dir_truncates_a_large_directory() {
+    let mut guest = Guest::new();
+
+    // Enough entries to overflow the header budget (~3500 bytes).
+    let n = 200;
+    for i in 0..n {
+        let name = format!("dir/file_{i:03}.txt");
+        let (ok, error) = guest.fs_write(&name, b"x");
+        assert!(ok, "write {name} -> {error:?}");
+    }
+
+    let (ok, error, entries, total, truncated) = guest.fs_list_full("dir");
+    assert!(ok, "list dir -> {error:?}");
+    assert!(truncated, "a {n}-entry listing was not truncated");
+    assert_eq!(total, Some(n as u64), "total entry count");
+    assert!(
+        entries.len() < n,
+        "listing returned all {n} entries despite truncation"
+    );
+
+    guest.assert_canary_intact();
+}
+
+/// shell honors `timeout`: a long-running command is killed and reported as a
+/// distinct timeout, not a generic signal death (design.md §6). Uses a pure-shell
+/// busy loop so it does not depend on any external binary.
+#[test]
+fn shell_timeout_kills_a_long_command() {
+    let mut guest = Guest::new();
+
+    let (stdout, _stderr, code, timed_out, error) =
+        guest.exec_opts("while :; do :; done", None, Some(200));
+    assert_eq!(error, None, "shell timeout returned an error: {error:?}");
+    assert!(
+        timed_out,
+        "busy loop with a 200ms timeout was not reported as timed_out (code {code:?}, stdout {stdout:?})"
+    );
+    assert_ne!(code, Some(0), "timed-out command reported success");
+
+    guest.assert_canary_intact();
+}
+
+/// shell honors `cwd` (relative to /work) and refuses a cwd that escapes it.
+#[test]
+fn shell_honors_cwd_and_refuses_escaping_cwd() {
+    let mut guest = Guest::new();
+
+    let (ok, error) = guest.fs_write("sub/file.txt", b"inside");
+    assert!(ok, "write sub/file.txt -> {error:?}");
+
+    // cwd resolves relative to /work: `cat file.txt` finds the file there.
+    let (stdout, stderr, code, _timed_out, err) = guest.exec_opts("cat file.txt", Some("sub"), None);
+    assert_eq!(err, None, "cwd exec returned an error: {err:?}");
+    assert_eq!(code, Some(0), "cat in cwd failed: {stderr}");
+    assert_eq!(stdout, "inside", "cat in cwd read the wrong bytes");
+
+    // pwd reflects the cwd (physical path, independent of any PWD env var).
+    let (stdout, stderr, code, _t, err) = guest.exec_opts("pwd -P", Some("sub"), None);
+    assert_eq!(err, None, "pwd cwd returned an error: {err:?}");
+    assert_eq!(code, Some(0), "pwd failed: {stderr}");
+    assert_eq!(stdout.trim(), "/work/sub", "pwd did not reflect cwd: {stdout:?}");
+
+    // An escaping cwd is refused with a model-actionable code, not honored.
+    let (_o, _e, _c, _t, err) = guest.exec_opts("cat secret.txt", Some("../outside"), None);
+    assert_eq!(
+        err.as_deref(),
+        Some("bad_path"),
+        "escaping cwd was not refused as bad_path: {err:?}"
+    );
+
+    guest.assert_canary_intact();
+}
+
+/// `shell` must not inherit the control channel as stdin: a command that reads
+/// stdin (`cat` with no file) must return promptly on /dev/null, not block on —
+/// or consume — protocol frames.
+#[test]
+fn shell_stdin_is_not_the_control_channel() {
+    let mut guest = Guest::new();
+
+    // `cat` with no arguments reads stdin. With stdin redirected to /dev/null it
+    // sees EOF immediately; if it inherited the control channel this would hang
+    // until the harness read timeout instead of returning.
+    let (stdout, stderr, code) = guest.exec("cat");
+    assert_eq!(code, Some(0), "`cat` on /dev/null should exit 0: {stderr}");
+    assert!(
+        stdout.is_empty(),
+        "`cat` produced output from a non-null stdin: {stdout:?}"
     );
 
     guest.assert_canary_intact();
